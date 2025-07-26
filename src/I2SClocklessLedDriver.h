@@ -260,9 +260,9 @@ struct OffsetDisplay
 };
 static const char *TAG = "I2SClocklessLedDriver";
 #ifdef CONFIG_IDF_TARGET_ESP32S3
-static bool IRAM_ATTR  _I2SClocklessVirtualLedDriverinterruptHandler(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data);
+static bool IRAM_ATTR  _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data);
 #else
-static void IRAM_ATTR _I2SClocklessVirtualLedDriverinterruptHandler(void *arg);
+static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg);
 #endif
 static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B);
 /*
@@ -521,7 +521,7 @@ public:
     */
         // Enable DMA transfer callback
         gdma_tx_event_callbacks_t tx_cbs = {
-            .on_trans_eof = _I2SClocklessVirtualLedDriverinterruptHandler
+            .on_trans_eof = _I2SClocklessLedDriverinterruptHandler
           };
         gdma_register_tx_event_callbacks(dma_chan, &tx_cbs, this);
         // esp_intr_disable((*dma_chan).intr);
@@ -1583,7 +1583,7 @@ ets_delay_us(16);
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
 
-    static IRAM_ATTR bool _I2SClocklessVirtualLedDriverinterruptHandler(gdma_channel_handle_t dma_chan,
+    static IRAM_ATTR bool _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan,
                                    gdma_event_data_t *event_data, void *user_data)
 {
     // This DMA callback seems to trigger a moment before the last data has
