@@ -1629,7 +1629,7 @@ static IRAM_ATTR bool _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle
             cont->dmaBufferActive = (cont->dmaBufferActive + 1) % __NB_DMA_BUFFER;
         }
         cont->ledToDisplay_out = cont->ledToDisplay_out + 1;
-        if (cont->ledToDisplay >= NUM_LEDS_PER_STRIP + __NB_DMA_BUFFER + 1)
+        if (cont->ledToDisplay >=  cont->num_led_per_strip + __NB_DMA_BUFFER + 1)
         {
 
             i2sStop(cont);
