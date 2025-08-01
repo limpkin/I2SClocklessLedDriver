@@ -7,10 +7,79 @@
 #ifndef __I2S_CLOCKLESS_DRIVER_H
 #define __I2S_CLOCKLESS_DRIVER_H
 
- 
 #pragma once
 
+#ifdef CONFIG_IDF_TARGET_ESP32S3
 
+#define GDMA_OUT_INT_CLR_REG(i) (DR_REG_GDMA_BASE + 0x74 + (192 * i))
+#define GDMA_OUT_INT_ENA_REG(i) (DR_REG_GDMA_BASE + 0x70 + (192 * i))
+#define GDMA_OUT_INT_ST_REG(i) (DR_REG_GDMA_BASE + 0x6c + (192 * i))
+#include "esp_err.h"
+#include "esp_log.h"
+#include "esp_check.h"
+#include "rom/cache.h"
+// void gdma_default_tx_isr(void *args);
+#include "esp_heap_caps.h"
+#include "freertos/semphr.h"
+#include <stdio.h>
+
+// #include "esp32-hal-log.h"
+#include <driver/periph_ctrl.h>
+#include <soc/gdma_channel.h>
+
+#include <hal/gdma_types.h>
+#include <esp_private/gdma.h>
+#include <hal/dma_types.h>
+#include <hal/gpio_hal.h>
+#include <soc/lcd_cam_struct.h>
+#include <stdbool.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+// #include "hal/gpio_ll.h"
+#include "esp_rom_gpio.h"
+#include "driver/gpio.h"
+#include "esp_log.h"
+#include <hal/gdma_hal.h>
+#include "hal/gdma_ll.h"
+#include "soc/periph_defs.h"
+#include "soc/soc_caps.h"
+#include "soc/gdma_periph.h"
+// #endif
+#ifdef OVER_CLOCK_MAX
+#define CLOCK_DIV_NUM 4
+#define CLOCK_DIV_A 20
+#define CLOCK_DIV_B 9
+#endif
+#ifdef OVERCLOCK_1MHZ
+#define CLOCK_DIV_NUM 5
+#define CLOCK_DIV_A 1
+#define CLOCK_DIV_B 0
+#endif
+#ifdef OVERCLOCK_1_1MHZ
+#define CLOCK_DIV_NUM 4
+#define CLOCK_DIV_A 8
+#define CLOCK_DIV_B 4
+#endif
+#ifndef CLOCK_DIV_NUM
+#define CLOCK_DIV_NUM 6
+#define CLOCK_DIV_A 4
+#define CLOCK_DIV_B 1
+#endif
+
+typedef struct
+{
+    int div_num;
+    int div_a;
+    int div_b;
+} clock_speed;
+
+clock_speed clock_1123KHZ = {4, 20, 9}; //{4, 20, 9};
+clock_speed clock_1111KHZ = {4, 2, 1};
+clock_speed clock_1000KHZ = {5, 1, 0};
+clock_speed clock_800KHZ = {6, 4, 1};
+
+#define WS2812_DMA_DESCRIPTOR_BUFFER_MAX_SIZE (576 * 2)
+#else
 #include "esp_heap_caps.h"
 #include "soc/soc.h"
 #include "soc/gpio_sig_map.h"
@@ -26,10 +95,18 @@
 #include "freertos/semphr.h"
 #include <stdio.h>
 #include <rom/ets_sys.h>
-#include "esp32-hal-log.h"
-#include "Math.h"
+// #include "esp32-hal-log.h"
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+#include "hal/gpio_ll.h"
+#include "soc/gpio_struct.h"
+#include "rom/gpio.h"
+#endif
 
+#endif
+#include "esp_log.h"
+#include "math.h"
 
+#include "helper.h"
 
 #ifndef NUMSTRIPS
 #define NUMSTRIPS 16
@@ -45,7 +122,7 @@
 
 #define I2S_DEVICE 0
 
-#define AA (0x00AA00AAL)
+#define AAA (0x00AA00AAL)
 #define CC (0x0000CCCCL)
 #define FF (0xF0F0F0F0L)
 #define FF2 (0x0F0F0F0FL)
@@ -66,37 +143,37 @@
 #define _p_b 2
 #define _nb_components 4
 #else
-#ifdef COLOR_ORDER_RGBW
+#ifdef COLOR_ORDER_RGB
 #define _p_r 0
 #define _p_g 1
 #define _p_b 2
 #define _nb_components 3
 #else
-#ifdef  COLOR_ORDER_RGBW
+#ifdef COLOR_ORDER_RBG
 #define _p_r 0
 #define _p_g 2
 #define _p_b 1
 #define _nb_components 3
 #else
-#ifdef COLOR_ORDER_RGBW
+#ifdef COLOR_ORDER_GBR
 #define _p_r 2
 #define _p_g 0
 #define _p_b 1
 #define _nb_components 3
 #else
-#ifdef COLOR_ORDER_RGBW
+#ifdef COLOR_ORDER_BGR
 #define _p_r 2
 #define _p_g 1
 #define _p_b 0
 #define _nb_components 3
 #else
-#ifdef COLOR_ORDER_RGBW
+#ifdef COLOR_ORDER_BRG
 #define _p_r 1
 #define _p_g 2
 #define _p_b 0
 #define _nb_components 3
 #else
-#ifdef COLOR_ORDER_RGBW
+#ifdef COLOR_ORDER_GRB
 #define _p_r 1
 #define _p_g 0
 #define _p_b 2
@@ -114,6 +191,13 @@
 #endif
 #endif
 #endif
+
+#ifndef NUM_LEDS_PER_STRIP
+#pragma message "NUM_LEDS_PER_STRIP not defined, using default 256"
+#define NUM_LEDS_PER_STRIP 256
+#endif
+
+#define __delay (((NUM_LEDS_PER_STRIP * 125 * 8 * _nb_components) / 100000) + 1)
 
 #ifdef USE_PIXELSLIB
 #include "pixelslib.h"
@@ -121,14 +205,21 @@
 #include "___pixeltypes.h"
 #endif
 
+#include "framebuffer.h"
+
 #ifdef __HARDWARE_MAP
 #define _LEDMAPPING
 #endif
 #ifdef __SOFTWARE_MAP
 #define _LEDMAPPING
 #endif
-
-//#define FULL_DMA_BUFFER
+#ifdef __HARDWARE_MAP_PROGMEM
+#define _LEDMAPPING
+#endif
+// #define FULL_DMA_BUFFER
+#ifndef __NB_DMA_BUFFER
+#define __NB_DMA_BUFFER 6
+#endif
 
 typedef union
 {
@@ -137,6 +228,29 @@ typedef union
     uint32_t raw[2];
 } Lines;
 
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+static uint8_t signalsID[16] = {
+    LCD_DATA_OUT0_IDX,
+    LCD_DATA_OUT1_IDX,
+    LCD_DATA_OUT2_IDX,
+    LCD_DATA_OUT3_IDX,
+    LCD_DATA_OUT4_IDX,
+    LCD_DATA_OUT5_IDX,
+    LCD_DATA_OUT6_IDX,
+    LCD_DATA_OUT7_IDX,
+    LCD_DATA_OUT8_IDX,
+    LCD_DATA_OUT9_IDX,
+    LCD_DATA_OUT10_IDX,
+    LCD_DATA_OUT11_IDX,
+    LCD_DATA_OUT12_IDX,
+    LCD_DATA_OUT13_IDX,
+    LCD_DATA_OUT14_IDX,
+    LCD_DATA_OUT15_IDX,
+
+};
+static gdma_channel_handle_t dma_chan;
+
+#endif
 class I2SClocklessLedDriver;
 struct OffsetDisplay
 {
@@ -146,7 +260,11 @@ struct OffsetDisplay
     int panel_width;
 };
 static const char *TAG = "I2SClocklessLedDriver";
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+static bool IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data);
+#else
 static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg);
+#endif
 static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B);
 /*
 #ifdef ENABLE_HARDWARE_SCROLL
@@ -155,7 +273,7 @@ static void IRAM_ATTR loadAndTranspose(uint8_t *ledt, int led_per_strip, int num
 static void IRAM_ATTR loadAndTranspose(uint8_t *ledt, int *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
 #endif
 */
-static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver * driver);
+static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver *driver);
 
 enum colorarrangment
 {
@@ -175,16 +293,10 @@ enum displayMode
     LOOP,
     LOOP_INTERUPT,
 };
-
+/*
 int MOD(int a, int b)
 {
-    /* if (b == 1)
-    {
-        if (a < 0)
-            return -a;
-        else
-            return a;
-    }*/
+
     if (a < 0)
     {
         if (-a % b == 0)
@@ -195,16 +307,17 @@ int MOD(int a, int b)
     else
         return a % b;
 }
+*/
 
 struct LedTiming
 {
 
-    //led timing
+    // led timing
     uint32_t T0;
     uint32_t T1;
     uint32_t T2;
 
-    //compileled
+    // compileled
     uint8_t f1;
     uint8_t f2;
     uint8_t f3;
@@ -212,7 +325,7 @@ struct LedTiming
 
 class I2SClocklessLedDriver
 {
-
+#ifndef CONFIG_IDF_TARGET_ESP32S3
     struct I2SClocklessLedDriverDMABuffer
     {
         lldesc_t descriptor;
@@ -223,9 +336,12 @@ class I2SClocklessLedDriver
     const int deviceClockIndex[2] = {I2S0O_BCK_OUT_IDX, I2S1O_BCK_OUT_IDX};
     const int deviceWordSelectIndex[2] = {I2S0O_WS_OUT_IDX, I2S1O_WS_OUT_IDX};
     const periph_module_t deviceModule[2] = {PERIPH_I2S0_MODULE, PERIPH_I2S1_MODULE};
+#endif
 
 public:
+#ifndef CONFIG_IDF_TARGET_ESP32S3
     i2s_dev_t *i2s;
+#endif
     uint8_t __green_map[256];
     uint8_t __blue_map[256];
     uint8_t __red_map[256];
@@ -236,51 +352,66 @@ public:
     volatile xSemaphoreHandle I2SClocklessLedDriver_sem = NULL;
     volatile xSemaphoreHandle I2SClocklessLedDriver_semSync = NULL;
     volatile xSemaphoreHandle I2SClocklessLedDriver_semDisp = NULL;
+    volatile xSemaphoreHandle I2SClocklessLedDriver_waitDisp = NULL;
     volatile int dmaBufferActive = 0;
     volatile bool wait;
     displayMode __displayMode;
+    displayMode __defaultdisplayMode;
     volatile int ledToDisplay;
+    volatile int ledToDisplay_out;
     OffsetDisplay _offsetDisplay, _defaultOffsetDisplay;
     // volatile int oo=0;
-    uint8_t *leds,*saveleds;
+    uint8_t *leds, *saveleds;
     int startleds;
     int linewidth;
-    int dmaBufferCount = 2; //we use two buffers
+    int dmaBufferCount = __NB_DMA_BUFFER; // we use two buffers
     volatile bool transpose = false;
 
     volatile int num_strips;
     volatile int num_led_per_strip;
     volatile uint16_t total_leds;
-    //int clock_pin;
+    // int clock_pin;
     int p_r, p_g, p_b;
     int i2s_base_pin_index;
     int nb_components;
     int stripSize[16];
-    uint16_t (*mapLed)(int);
-       #ifdef __HARDWARE_MAP
-        uint16_t * _hmap;
-       volatile uint16_t * _hmapoff;
-    #endif
-    void setMapLed(uint16_t (*newMapLed)(int))
+    uint16_t (*mapLed)(uint16_t led);
+#ifdef __HARDWARE_MAP
+    uint16_t *_hmap;
+    volatile uint16_t *_hmapoff;
+    void setHmap(uint16_t *map)
     {
-      mapLed = newMapLed;
-
+        _hmap = map;
     }
- 
+#endif
+#ifdef __HARDWARE_MAP_PROGMEM
+    const uint16_t *_hmap;
+    volatile uint16_t _hmapoff;
+
+    void setHmap(const uint16_t *map)
+    {
+        _hmap = map;
+    }
+#endif
+    void setMapLed(uint16_t (*newMapLed)(uint16_t led))
+    {
+        mapLed = newMapLed;
+    }
+
     /*
-     This flag is used when using the NO_WAIT modeÒÒ
+     This flag is used when using the NO_WAIT mode
      */
     volatile bool isDisplaying = false;
-    volatile bool isWaiting = true;
+    volatile bool isWaiting = false;
+    volatile bool __enableDriver = true;
     volatile bool framesync = false;
     volatile bool wasWaitingtofinish = false;
     volatile int counti;
-    
 
-    I2SClocklessLedDriver(){};
+    I2SClocklessLedDriver() {};
     void setPins(int *Pins)
     {
-
+#ifndef CONFIG_IDF_TARGET_ESP32S3
         for (int i = 0; i < num_strips; i++)
         {
 
@@ -288,9 +419,19 @@ public:
             gpio_set_direction((gpio_num_t)Pins[i], (gpio_mode_t)GPIO_MODE_DEF_OUTPUT);
             gpio_matrix_out(Pins[i], deviceBaseIndex[I2S_DEVICE] + i + 8, false, false);
         }
+#else
+        for (int i = 0; i < num_strips; i++)
+        {
+            esp_rom_gpio_connect_out_signal(Pins[i], signalsID[i], false, false);
+           // gpio_hal_iomux_func_sel(GPIO_PIN_MUX_REG[Pins[i]], PIN_FUNC_GPIO);
+           // gpio_hal_func_sel(GPIO_PIN_MUX_REG[Pins[i]], PIN_FUNC_GPIO);
+            gpio_iomux_out(Pins[i], PIN_FUNC_GPIO, false);
+            gpio_set_drive_capability((gpio_num_t)Pins[i], (gpio_drive_cap_t)3);
+        }
+#endif
     }
 
-    //Corrected = 255 * (Image/255)^(1/2.2).
+    // Corrected = 255 * (Image/255)^(1/2.2).
 
     void setBrightness(int brightness)
     {
@@ -328,6 +469,63 @@ public:
 
     void i2sInit()
     {
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+        periph_module_enable(PERIPH_LCD_CAM_MODULE);
+        periph_module_reset(PERIPH_LCD_CAM_MODULE);
+
+        // Reset LCD bus
+        LCD_CAM.lcd_user.lcd_reset = 1;
+        esp_rom_delay_us(100);
+
+        LCD_CAM.lcd_clock.clk_en = 1;             // Enable peripheral clock
+        LCD_CAM.lcd_clock.lcd_clk_sel = 2;        // XTAL_CLK source
+        LCD_CAM.lcd_clock.lcd_ck_out_edge = 0;    // PCLK low in 1st half cycle
+        LCD_CAM.lcd_clock.lcd_ck_idle_edge = 0;   // PCLK low idle
+        LCD_CAM.lcd_clock.lcd_clk_equ_sysclk = 0; // PCLK = CLK / (CLKCNT_N+1)
+        LCD_CAM.lcd_clock.lcd_clkm_div_num = 50;  //_clockspeed.div_num; // 1st stage 1:250 divide
+        LCD_CAM.lcd_clock.lcd_clkm_div_a = 1;     //_clockspeed.div_a;     // 0/1 fractional divide
+        LCD_CAM.lcd_clock.lcd_clkm_div_b = 0;     // Ò_clockspeed.div_b;
+        LCD_CAM.lcd_clock.lcd_clkcnt_n = 1;       //
+
+        LCD_CAM.lcd_ctrl.lcd_rgb_mode_en = 0;    // i8080 mode (not RGB)
+        LCD_CAM.lcd_rgb_yuv.lcd_conv_bypass = 0; // Disable RGB/YUV converter
+        LCD_CAM.lcd_misc.lcd_next_frame_en = 0;  // Do NOT auto-frame
+        LCD_CAM.lcd_data_dout_mode.val = 0;      // No data delays
+        LCD_CAM.lcd_user.lcd_always_out_en = 1;  // Enable 'always out' mode
+        LCD_CAM.lcd_user.lcd_8bits_order = 0;    // Do not swap bytes
+        LCD_CAM.lcd_user.lcd_bit_order = 0;      // Do not reverse bit order
+        LCD_CAM.lcd_user.lcd_byte_order = 0;
+        LCD_CAM.lcd_user.lcd_2byte_en = 1;       // 8-bit data mode
+        LCD_CAM.lcd_user.lcd_dummy = 0;          // Dummy phase(s) @ LCD start
+        LCD_CAM.lcd_user.lcd_dummy_cyclelen = 0; // 1 dummy phase
+        LCD_CAM.lcd_user.lcd_cmd = 0;            // No command at LCD start
+        LCD_CAM.lcd_misc.lcd_bk_en = 1;
+        // -- Create a semaphore to block execution until all the controllers are done
+        gdma_channel_alloc_config_t dma_chan_config = {
+            .sibling_chan = NULL,
+            .direction = GDMA_CHANNEL_DIRECTION_TX,
+            .flags = {
+                .reserve_sibling = 0}};
+        gdma_new_channel(&dma_chan_config, &dma_chan);
+        gdma_connect(dma_chan, GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_LCD, 0));
+        gdma_strategy_config_t strategy_config = {
+            .owner_check = false,
+            .auto_update_desc = false};
+        gdma_apply_strategy(dma_chan, &strategy_config);
+        /*
+        gdma_transfer_ability_t ability = {
+            .psram_trans_align = 64,
+            //.sram_trans_align = 64,
+        };
+        gdma_set_transfer_ability(dma_chan, &ability);
+    */
+        // Enable DMA transfer callback
+        gdma_tx_event_callbacks_t tx_cbs = {
+            .on_trans_eof = _I2SClocklessLedDriverinterruptHandler};
+        gdma_register_tx_event_callbacks(dma_chan, &tx_cbs, this);
+        // esp_intr_disable((*dma_chan).intr);
+        LCD_CAM.lcd_user.lcd_start = 0;
+#else
         int interruptSource;
         if (I2S_DEVICE == 0)
         {
@@ -362,16 +560,15 @@ public:
 
         i2s->clkm_conf.clka_en = 0;
 
-//add the capability of going a bit faster
+        // add the capability of going a bit faster
         i2s->clkm_conf.clkm_div_a = 3;    // CLOCK_DIVIDER_A;
-        i2s->clkm_conf.clkm_div_b = 1;    //CLOCK_DIVIDER_B;
-        i2s->clkm_conf.clkm_div_num = 33; //CLOCK_DIVIDER_N;
-
+        i2s->clkm_conf.clkm_div_b = 1;    // CLOCK_DIVIDER_B;
+        i2s->clkm_conf.clkm_div_num = 33; // CLOCK_DIVIDER_N;
 
         i2s->fifo_conf.val = 0;
         i2s->fifo_conf.tx_fifo_mod_force_en = 1;
         i2s->fifo_conf.tx_fifo_mod = 1;  // 16-bit single channel data
-        i2s->fifo_conf.tx_data_num = 32; //32; // fifo length
+        i2s->fifo_conf.tx_data_num = 32; // 32; // fifo length
         i2s->fifo_conf.dscr_en = 1;      // fifo will use dma
         i2s->sample_rate_conf.tx_bck_div_num = 1;
         i2s->conf1.val = 0;
@@ -390,7 +587,7 @@ public:
         SET_PERI_REG_BITS(I2S_INT_ENA_REG(I2S_DEVICE), I2S_OUT_TOTAL_EOF_INT_ENA_V, 1, I2S_OUT_TOTAL_EOF_INT_ENA_S);
         */
         esp_err_t e = esp_intr_alloc(interruptSource, ESP_INTR_FLAG_INTRDISABLED | ESP_INTR_FLAG_LEVEL3 | ESP_INTR_FLAG_IRAM, &_I2SClocklessLedDriverinterruptHandler, this, &_gI2SClocklessDriver_intr_handle);
-
+#endif
         // -- Create a semaphore to block execution until all the controllers are done
 
         if (I2SClocklessLedDriver_sem == NULL)
@@ -410,13 +607,26 @@ public:
 
     void initDMABuffers()
     {
-        DMABuffersTampon[0] = allocateDMABuffer(nb_components * 8 * 2 * 3); //the buffers for the
+        /*
+        DMABuffersTampon[0] = allocateDMABuffer(nb_components * 8 * 2 * 3); // the buffers for the
         DMABuffersTampon[1] = allocateDMABuffer(nb_components * 8 * 2 * 3);
         DMABuffersTampon[2] = allocateDMABuffer(nb_components * 8 * 2 * 3);
         DMABuffersTampon[3] = allocateDMABuffer(nb_components * 8 * 2 * 3 * 4);
 
         putdefaultones((uint16_t *)DMABuffersTampon[0]->buffer);
         putdefaultones((uint16_t *)DMABuffersTampon[1]->buffer);
+        */
+
+        for (int i = 0; i < __NB_DMA_BUFFER + 1; i++)
+        {
+            DMABuffersTampon[i] = allocateDMABuffer(nb_components * 8 * 2 * 3);
+        }
+         DMABuffersTampon[__NB_DMA_BUFFER + 1] = allocateDMABuffer(nb_components * 8 * 2 * 3*4);
+
+        for (int i = 0; i < __NB_DMA_BUFFER; i++)
+        {
+            putdefaultones((uint16_t *)DMABuffersTampon[i]->buffer);
+        }
 
 #ifdef FULL_DMA_BUFFER
         /*
@@ -470,24 +680,26 @@ public:
         /*
          We wait for the display to be stopped before launching a new one
          */
-        
-         __displayMode = dispmode;
+
+        __displayMode = dispmode;
         isWaiting = false;
         if (dispmode == LOOP or dispmode == LOOP_INTERUPT)
         {
             DMABuffersTransposed[num_led_per_strip + 1]->descriptor.qe.stqe_next = &(DMABuffersTransposed[0]->descriptor);
         }
         transpose = false;
+        // wasWaitingtofinish = true;
+        //  Serial.printf(" was:%d\n",wasWaitingtofinish);
         i2sStart(DMABuffersTransposed[0]);
 
         if (dispmode == WAIT)
         {
             isWaiting = true;
-            I2SClocklessLedDriver_sem=xSemaphoreCreateBinary();
+            if (I2SClocklessLedDriver_sem == NULL)
+                I2SClocklessLedDriver_sem = xSemaphoreCreateBinary();
             xSemaphoreTake(I2SClocklessLedDriver_sem, portMAX_DELAY);
         }
     }
-
 
     void showPixelsFirstTranspose(OffsetDisplay offdisp)
     {
@@ -495,8 +707,8 @@ public:
         showPixelsFirstTranspose();
         _offsetDisplay = _defaultOffsetDisplay;
     }
-    
-    void showPixelsFirstTranspose(OffsetDisplay offdisp,uint8_t * temp_leds)
+
+    void showPixelsFirstTranspose(OffsetDisplay offdisp, uint8_t *temp_leds)
     {
         _offsetDisplay = offdisp;
         showPixelsFirstTranspose(temp_leds);
@@ -506,10 +718,22 @@ public:
     void showPixelsFirstTranspose(uint8_t *new_leds)
     {
         uint8_t *tmp_leds;
-        tmp_leds = leds;
+        //  Serial.println("on entre");
+        if (isDisplaying == true && __displayMode == NO_WAIT)
+        {
+            // Serial.println("we are here in trs");
+            wasWaitingtofinish = true;
+            tmp_leds = new_leds;
+            if (I2SClocklessLedDriver_waitDisp == NULL)
+                I2SClocklessLedDriver_waitDisp = xSemaphoreCreateCounting(10, 0);
+            xSemaphoreTake(I2SClocklessLedDriver_waitDisp, portMAX_DELAY);
+            wasWaitingtofinish = false;
+            // Serial.println("deiba waiuting in tre");
+            new_leds = tmp_leds;
+        }
         leds = new_leds;
         showPixelsFirstTranspose();
-        leds = tmp_leds;
+        // leds = tmp_leds;
     }
 
     void showPixelsFirstTranspose()
@@ -518,22 +742,27 @@ public:
     }
     void showPixelsFirstTranspose(displayMode dispmode)
     {
-        
+        // Serial.println("on entrre");
+        transpose = false;
         if (leds == NULL)
         {
-           ESP_LOGE(TAG,"no led");
+            ESP_LOGE(TAG, "no led");
             return;
         }
-        if (__displayMode == NO_WAIT && isDisplaying == true)
+        if (isDisplaying == true && dispmode == NO_WAIT)
         {
-            if(I2SClocklessLedDriver_semDisp==NULL)
-         I2SClocklessLedDriver_semDisp= xSemaphoreCreateBinary();
-          xSemaphoreTake(I2SClocklessLedDriver_semDisp, portMAX_DELAY);
-
+            Serial.println("we are here");
+            wasWaitingtofinish = true;
+            if (I2SClocklessLedDriver_waitDisp == NULL)
+                I2SClocklessLedDriver_waitDisp = xSemaphoreCreateCounting(10, 0);
+            xSemaphoreTake(I2SClocklessLedDriver_waitDisp, portMAX_DELAY);
+            Serial.println("deiba waiuting");
         }
+        // Serial.println("on dsiup");
+        // dmaBufferActive=0;
         transposeAll();
+        // Serial.println("end transpose");
         showPixelsFromBuffer(dispmode);
-       
     }
 
     void transposeAll()
@@ -563,15 +792,20 @@ public:
         }*/
         for (int j = 0; j < num_led_per_strip; j++)
         {
+            ledToDisplay = j;
+            dmaBufferActive = j + 1;
+            loadAndTranspose(this);
+            /*
             #ifdef ENABLE_HARDWARE_SCROLL
             loadAndTranspose(leds, num_led_per_strip, num_strips, _offsetDisplay, (uint16_t *)DMABuffersTransposed[j + 1]->buffer, j, __green_map, __red_map, __blue_map, __white_map, nb_components, p_g, p_r, p_b);
             #else
             loadAndTranspose(leds, stripSize, num_strips, (uint16_t *)DMABuffersTransposed[j+1]->buffer, j, __green_map, __red_map, __blue_map, __white_map, nb_components, p_g, p_r, p_b);
             #endif
+            */
         }
     }
 
-    void setPixelinBufferByStrip(int stripNumber,int posOnStrip,uint8_t red, uint8_t green, uint8_t blue)
+    void setPixelinBufferByStrip(int stripNumber, int posOnStrip, uint8_t red, uint8_t green, uint8_t blue)
     {
         uint8_t W = 0;
         if (nb_components > 3)
@@ -582,10 +816,10 @@ public:
             green = green - W;
             blue = blue - W;
         }
-        setPixelinBufferByStrip(stripNumber,posOnStrip, red, green, blue, W);
+        setPixelinBufferByStrip(stripNumber, posOnStrip, red, green, blue, W);
     }
 
-    void setPixelinBufferByStrip(int stripNumber,int posOnStrip,uint8_t red, uint8_t green, uint8_t blue, uint8_t white)
+    void setPixelinBufferByStrip(int stripNumber, int posOnStrip, uint8_t red, uint8_t green, uint8_t blue, uint8_t white)
     {
         uint16_t mask = ~(1 << stripNumber);
         uint8_t colors[3];
@@ -643,31 +877,30 @@ public:
     void setPixelinBuffer(uint32_t pos, uint8_t red, uint8_t green, uint8_t blue, uint8_t white)
     {
 
-        int stripNumber=-1;
-        int total=0;
-        int posOnStrip =pos;
-        if (pos>total_leds-1)
+        int stripNumber = -1;
+        int total = 0;
+        int posOnStrip = pos;
+        if (pos > total_leds - 1)
         {
-            printf("Position out of bound %d > %d\n",pos,total_leds-1);
+            printf("Position out of bound %d > %d\n", pos, total_leds - 1);
             return;
         }
-        while(total<=pos)
+        while (total <= pos)
         {
             stripNumber++;
-            total+=stripSize[stripNumber];
+            total += stripSize[stripNumber];
         }
-        if(stripNumber>0)
-            {
-                posOnStrip=-total+pos+stripSize[stripNumber];
-            }
+        if (stripNumber > 0)
+        {
+            posOnStrip = -total + pos + stripSize[stripNumber];
+        }
         else
         {
-            posOnStrip=pos;
+            posOnStrip = pos;
         }
 
-       setPixelinBufferByStrip(stripNumber,posOnStrip, red, green, blue, white);
+        setPixelinBufferByStrip(stripNumber, posOnStrip, red, green, blue, white);
     }
-
 
     void setPixelinBuffer(uint32_t pos, uint8_t red, uint8_t green, uint8_t blue)
     {
@@ -690,13 +923,13 @@ public:
     }
     void waitSync()
     {
-        I2SClocklessLedDriver_semSync=xSemaphoreCreateBinary();
+        I2SClocklessLedDriver_semSync = xSemaphoreCreateBinary();
         xSemaphoreTake(I2SClocklessLedDriver_semSync, portMAX_DELAY);
     }
 #endif
     void setPixel(uint32_t pos, uint8_t red, uint8_t green, uint8_t blue, uint8_t white)
     {
-        uint8_t *offset = leds + (pos << 2); //faster than doing * 4
+        uint8_t *offset = leds + (pos << 2); // faster than doing * 4
         *(offset) = red;
         *(++offset) = green;
         *(++offset) = blue;
@@ -727,112 +960,111 @@ public:
         }
     }
 
-    /* hardware scroll
-
-*/
-
     OffsetDisplay getDefaultOffset()
     {
         return _defaultOffsetDisplay;
     }
 
+    void waitDisplay()
+    {
+        if (isDisplaying == true)
+        {
+            wasWaitingtofinish = true;
+            ESP_LOGD(TAG, "already displaying... wait");
+            if (I2SClocklessLedDriver_waitDisp == NULL)
+            {
+                I2SClocklessLedDriver_waitDisp = xSemaphoreCreateCounting(10, 0);
+            }
+            const TickType_t xDelay = __delay;
+            xSemaphoreTake(I2SClocklessLedDriver_waitDisp, xDelay);
+        }
+        isDisplaying = true;
+    }
+
+    void showPixels(displayMode dispmode, uint8_t *new_leds, OffsetDisplay offdisp)
+    {
+        waitDisplay();
+        _offsetDisplay = offdisp;
+        leds = new_leds;
+        __displayMode = dispmode;
+        __showPixels();
+    }
     void showPixels(uint8_t *new_leds, OffsetDisplay offdisp)
     {
+        waitDisplay();
         _offsetDisplay = offdisp;
-        showPixels(new_leds);
-        _offsetDisplay = _defaultOffsetDisplay;
+        leds = new_leds;
+        __displayMode = WAIT;
+        __showPixels();
+        // _offsetDisplay = _defaultOffsetDisplay;
     }
 
     void showPixels(OffsetDisplay offdisp)
     {
+        waitDisplay();
         _offsetDisplay = offdisp;
-        showPixels();
-        _offsetDisplay = _defaultOffsetDisplay;
+        leds = saveleds;
+
+        __displayMode = WAIT;
+        __showPixels();
+        // _offsetDisplay = _defaultOffsetDisplay;
     }
 
-    /*
-Show pixel circular
-*/
-    /*
-    void showPixels(uint8_t *new_leds)
-    {
-         _offsetDisplay=offdisp
-        showPixels(new_leds);
-        startleds=0;
-    }*/
-
-    /*
-    void showPixels(int offsett)
-    {
-        startleds=offsett;
-        showPixels();
-        startleds=0;
-    }
-    */
-
-    /*
-Show pixels classiques
-*/
     void showPixels(uint8_t *newleds)
     {
-       // uint8_t *tmp_leds;
-        //tmp_leds = leds;
-       // leds = newleds;
-        showPixels(WAIT,newleds);
-     //   leds = tmp_leds;
+        waitDisplay();
+        leds = newleds;
+        __displayMode = WAIT;
+        _offsetDisplay = _defaultOffsetDisplay;
+        __showPixels();
     }
 
     void showPixels()
     {
-        showPixels(WAIT);
+        if (!__enableDriver)
+            return;
+        waitDisplay();
+        leds = saveleds;
+        _offsetDisplay = _defaultOffsetDisplay;
+        __displayMode = WAIT;
+        __showPixels();
     }
 
-    
-        void showPixels(displayMode dispmode,uint8_t *newleds)
+    void showPixels(displayMode dispmode, uint8_t *newleds)
     {
-        //uint8_t *tmp_leds;
-        //tmp_leds = leds;
-         if(isDisplaying == true and __displayMode==NO_WAIT)
-         {
-            //printf("dejà en cours on attend\n");
-            //long t1=ESP.getCycleCount();
-            wasWaitingtofinish = true;
-            if(I2SClocklessLedDriver_semDisp==NULL)
-                I2SClocklessLedDriver_semDisp = xSemaphoreCreateBinary();
-                const TickType_t xDelay = 50 ; //to avoid full blocking
-            xSemaphoreTake(I2SClocklessLedDriver_semDisp, xDelay);
-            //printf("on retourne %ld\n",(ESP.getCycleCount()-t1)/240000);
-         }
+
+        waitDisplay();
+        _offsetDisplay = _defaultOffsetDisplay;
         leds = newleds;
-        showPixels(dispmode);
-        //leds = tmp_leds;
+        __displayMode = dispmode;
+        __showPixels();
+        // leds = tmp_leds;
     }
 
     void showPixels(displayMode dispmode)
     {
-#ifdef __HARDWARE_MAP
-           _hmapoff=_hmap;
-        
-    #endif
- if (dispmode == NO_WAIT && isDisplaying == true)
-            {
-                //printf("deja display\n");
-                //return;
-                wasWaitingtofinish = true;
-                if(I2SClocklessLedDriver_semDisp==NULL)
-                    I2SClocklessLedDriver_semDisp = xSemaphoreCreateBinary();
-                    const TickType_t xDelay = 50 ; //to avoid full blocking
-                xSemaphoreTake(I2SClocklessLedDriver_semDisp, xDelay);
-                //printf("one re\n");
-            }
+        waitDisplay();
+        leds = saveleds;
+        _offsetDisplay = _defaultOffsetDisplay;
+        __displayMode = dispmode;
+        __showPixels();
+    }
 
-        #if HARDWARESPRITES == 1
-        memset(target, 0, num_led_per_strip * num_strips  * 2);
-        for (int i = 0; i < 8; i++)
+    void __showPixels()
+    {
+        if (!__enableDriver)
         {
-            sprites[i].reorder(_offsetDisplay.panel_width, _offsetDisplay.panel_height);
+            return;
         }
-        #endif
+#ifdef __HARDWARE_MAP
+        _hmapoff = _hmap;
+
+#endif
+#ifdef __HARDWARE_MAP_HARDWARE
+        _hmapoff = 0;
+
+#endif
+
         if (leds == NULL)
         {
             ESP_LOGE(TAG, "no leds buffer defined");
@@ -840,25 +1072,46 @@ Show pixels classiques
         }
         ledToDisplay = 0;
         transpose = true;
-        DMABuffersTampon[0]->descriptor.qe.stqe_next = &(DMABuffersTampon[1]->descriptor);
-        DMABuffersTampon[1]->descriptor.qe.stqe_next = &(DMABuffersTampon[0]->descriptor);
-        DMABuffersTampon[2]->descriptor.qe.stqe_next = &(DMABuffersTampon[0]->descriptor);
-        DMABuffersTampon[3]->descriptor.qe.stqe_next = 0;
-        dmaBufferActive = 0;
-        #ifdef ENABLE_HARDWARE_SCROLL
-        loadAndTranspose(leds, num_led_per_strip, num_strips, _offsetDisplay, (uint16_t *)DMABuffersTampon[0]->buffer, ledToDisplay, __green_map, __red_map, __blue_map, __white_map, nb_components, p_g, p_r, p_b);
-        #else
-        loadAndTranspose(this);//leds, stripSize, num_strips, (uint16_t *)DMABuffersTampon[0]->buffer, ledToDisplay, __green_map, __red_map, __blue_map, __white_map, nb_components, p_g, p_r, p_b);
-        #endif
-        __displayMode=dispmode;
-        dmaBufferActive = 1;
-        i2sStart(DMABuffersTampon[2]);
-        isDisplaying=true;
-        if (dispmode == WAIT)
+#ifndef CONFIG_IDF_TARGET_ESP32S3
+        for (int buff_num = 0; buff_num < __NB_DMA_BUFFER - 1; buff_num++)
+        {
+
+            DMABuffersTampon[buff_num]->descriptor.qe.stqe_next = &(DMABuffersTampon[buff_num + 1]->descriptor);
+        }
+
+        DMABuffersTampon[__NB_DMA_BUFFER - 1]->descriptor.qe.stqe_next = &(DMABuffersTampon[0]->descriptor);
+        DMABuffersTampon[__NB_DMA_BUFFER]->descriptor.qe.stqe_next = &(DMABuffersTampon[0]->descriptor);
+        DMABuffersTampon[__NB_DMA_BUFFER + 1]->descriptor.qe.stqe_next = 0;
+
+#else
+        for (int buff_num = 0; buff_num < __NB_DMA_BUFFER - 1; buff_num++)
+        {
+
+            DMABuffersTampon[buff_num]->next = DMABuffersTampon[buff_num + 1];
+        }
+        DMABuffersTampon[__NB_DMA_BUFFER - 1]->next = DMABuffersTampon[0];
+        DMABuffersTampon[__NB_DMA_BUFFER]->next = DMABuffersTampon[0];
+        DMABuffersTampon[__NB_DMA_BUFFER + 1]->next = DMABuffersTampon[__NB_DMA_BUFFER + 1];
+#endif
+     ledToDisplay = 0;
+     dmaBufferActive=0;
+        for (int num_buff = 0; num_buff < __NB_DMA_BUFFER - 1; num_buff++)
+        {
+            loadAndTranspose(this);
+            dmaBufferActive = dmaBufferActive + 1;
+            ledToDisplay = ledToDisplay + 1;
+        }
+        ledToDisplay = ledToDisplay - 1;
+        dmaBufferActive = __NB_DMA_BUFFER - 1;
+        ledToDisplay_out = 0;
+         isDisplaying = true;
+         i2sStart(DMABuffersTampon[__NB_DMA_BUFFER]);
+       
+        if (__displayMode == WAIT)
         {
             isWaiting = true;
-            if (I2SClocklessLedDriver_sem==NULL)
-            I2SClocklessLedDriver_sem=xSemaphoreCreateBinary();
+            if (I2SClocklessLedDriver_sem == NULL)
+                I2SClocklessLedDriver_sem = xSemaphoreCreateBinary();
             xSemaphoreTake(I2SClocklessLedDriver_sem, portMAX_DELAY);
         }
         else
@@ -866,84 +1119,77 @@ Show pixels classiques
             isWaiting = false;
             isDisplaying = true;
         }
-        //__displayMode=dispmode;
-        //isWaiting = true;
-        //I2SClocklessLedDriver_sem=xSemaphoreCreateBinary();
-        //xSemaphoreTake(I2SClocklessLedDriver_sem, portMAX_DELAY);
     }
 
-
-    Pixel * strip(int stripNum)
+    Pixel *strip(int stripNum)
     {
-        Pixel * l =(Pixel *)leds;
-        //Serial.printf(" strip %d\n",stripNum);
+        Pixel *l = (Pixel *)leds;
+        // Serial.printf(" strip %d\n",stripNum);
 
-        for(int i=0;i< (stripNum % num_strips);i++)
+        for (int i = 0; i < (stripNum % num_strips); i++)
         {
-             //Serial.printf("     strip %d\n",stripSize[i]);
-            l=l+stripSize[i];
+            // Serial.printf("     strip %d\n",stripSize[i]);
+            l = l + stripSize[i];
         }
         return l;
     }
 
-    int maxLength(int *sizes,int num_strips)
+    int maxLength(int *sizes, int num_strips)
     {
-            int max=0;
-            for(int i=0;i<num_strips;i++)
+        int max = 0;
+        for (int i = 0; i < num_strips; i++)
+        {
+            if (max < sizes[i])
             {
-                if(max<sizes[i])
-                {
-                    max=sizes[i];
-                }
+                max = sizes[i];
             }
-            return max;
+        }
+        return max;
     }
 
 #ifdef USE_PIXELSLIB
-    void initled(Pixels pix,int *Pinsq)
-    { 
-        initled((uint8_t *)pix.getPixels(),Pinsq,pix.getLengths(), pix.getNumStrip());
+    void initled(Pixels pix, int *Pinsq)
+    {
+        initled((uint8_t *)pix.getPixels(), Pinsq, pix.getLengths(), pix.getNumStrip());
     }
 #endif
-    void initled(uint8_t *leds, int *Pinsq, int *sizes,  int num_strips)
+    void initled(uint8_t *leds, int *Pinsq, int *sizes, int num_strips)
     {
-        total_leds=0;
-        for(int i=0;i<num_strips;i++)
+        total_leds = 0;
+        for (int i = 0; i < num_strips; i++)
         {
-            this->stripSize[i]=sizes[i];
-            total_leds+=sizes[i];
+            this->stripSize[i] = sizes[i];
+            total_leds += sizes[i];
         }
-        int maximum= maxLength( sizes,num_strips);
-        //Serial.printf("maximum %d\n",maximum);
-         ESP_LOGE(TAG, "maximum %d\n",maximum);
+        int maximum = maxLength(sizes, num_strips);
+        // Serial.printf("maximum %d\n",maximum);
+        ESP_LOGV(TAG, "maximum leds%d\n", maximum);
         nb_components = _nb_components;
         p_r = _p_r;
         p_g = _p_g;
         p_b = _p_b;
-          __initled(leds, Pinsq, num_strips, maximum);
+        __initled(leds, Pinsq, num_strips, maximum);
     }
 
     void initled(uint8_t *leds, int *Pinsq, int num_strips, int num_led_per_strip)
     {
-         for(int i=0;i<num_strips;i++)
+        for (int i = 0; i < num_strips; i++)
         {
-            this->stripSize[i]=num_led_per_strip;
+            this->stripSize[i] = num_led_per_strip;
         }
-        initled(leds, Pinsq,this->stripSize, num_strips);
+        initled(leds, Pinsq, this->stripSize, num_strips);
     }
 
-
-    void initled(uint8_t *leds, int *Pinsq, int *sizes,  int num_strips,colorarrangment cArr)
+    void initled(uint8_t *leds, int *Pinsq, int *sizes, int num_strips, colorarrangment cArr)
     {
-        total_leds=0;
-        for(int i=0;i<num_strips;i++)
+        total_leds = 0;
+        for (int i = 0; i < num_strips; i++)
         {
-            this->stripSize[i]=sizes[i];
-            total_leds+=sizes[i];
+            this->stripSize[i] = sizes[i];
+            total_leds += sizes[i];
         }
-        int maximum= maxLength( sizes,num_strips);
+        int maximum = maxLength(sizes, num_strips);
 
-           
         switch (cArr)
         {
         case ORDER_RGB:
@@ -989,24 +1235,51 @@ Show pixels classiques
             p_b = 2;
             break;
         }
-          __initled(leds, Pinsq, num_strips, maximum);
+        __initled(leds, Pinsq, num_strips, maximum);
     }
 
-    void initled(uint8_t *leds, int *Pinsq, int num_strips, int num_led_per_strip,colorarrangment cArr)
+    void initled(uint8_t *leds, int *Pinsq, int num_strips, int num_led_per_strip, colorarrangment cArr)
     {
-         for(int i=0;i<num_strips;i++)
+        for (int i = 0; i < num_strips; i++)
         {
-            this->stripSize[i]=num_led_per_strip;
+            this->stripSize[i] = num_led_per_strip;
         }
-        initled(leds, Pinsq,this->stripSize, num_strips,cArr);
+        initled(leds, Pinsq, this->stripSize, num_strips, cArr);
     }
 
-/*
-*
-*
-*
-*
-*/
+    /*
+     *
+     *
+     *
+     *
+     */
+
+    void createhardwareMap()
+    {
+#ifdef __HARDWARE_MAP
+        if (mapLed == NULL)
+        {
+            printf("no mapapig\r\n");
+            return;
+        }
+        ESP_LOGE(TAG, "trying to map2");
+        int offset2 = 0;
+        for (int leddisp = 0; leddisp < num_led_per_strip; leddisp++)
+        {
+            int offset = 0;
+            for (int i = 0; i < num_strips; i++)
+            {
+                if (leddisp < stripSize[i])
+                {
+                    // ESP_LOGE(TAG,"%d :%d\r\n",leddisp+offset,mapLed(leddisp+offset));
+                    _hmap[offset2] = mapLed(leddisp + offset) * nb_components;
+                    offset += stripSize[i];
+                    offset2++;
+                }
+            }
+        }
+#endif
+    }
 
     void __initled(uint8_t *leds, int *Pinsq, int num_strips, int num_led_per_strip)
     {
@@ -1015,49 +1288,6 @@ Show pixels classiques
         _gammag = 1;
         _gammaw = 1;
         startleds = 0;
-#if HARDWARESPRITES == 1
-        //Serial.println(NUM_LEDS_PER_STRIP * NBIS2SERIALPINS * 8);
-        target = (uint16_t *)malloc(num_led_per_strip * num_strips * 2 + 2);
-#endif
-
-
-#ifdef __HARDWARE_MAP
-    _hmap=(uint16_t *)malloc(  total_leds * 2);
-    if(!_hmap)
-    {
-        Serial.printf("no memory\n");
-    }
-    else
-    {
-        /*
-        for(int leddisp=0;leddisp<num_led_per_strip;leddisp++)
-        {
-            for (int i = 0; i < num_strips; i++)
-            {
-                _hmap[i+leddisp*num_strips]=mapLed(leddisp+i*num_led_per_strip)*nb_components;
-            }
-        }
-        */
-      //int offset=0;
-       int offset2=0;
-         for(int leddisp=0;leddisp<num_led_per_strip;leddisp++)
-            {
-                int offset=0;
-                 for (int i = 0; i < num_strips; i++)
-                 {
-                    if(leddisp<stripSize[i])
-                    {
-                         _hmap[offset2]=mapLed(leddisp+offset)*nb_components;
-                         offset+=stripSize[i];
-                         offset2++;
-                    }
-                 }
-            }
-
-    }
-#endif
-        setBrightness(255);
-        dmaBufferCount = 2;
         this->leds = leds;
         this->saveleds = leds;
         this->num_led_per_strip = num_led_per_strip;
@@ -1070,21 +1300,64 @@ Show pixels classiques
         this->num_strips = num_strips;
         this->dmaBufferCount = dmaBufferCount;
 
+        ESP_LOGV(TAG, "xdelay:%d", __delay);
+#if HARDWARESPRITES == 1
+        // Serial.println(NUM_LEDS_PER_STRIP * NBIS2SERIALPINS * 8);
+        target = (uint16_t *)malloc(num_led_per_strip * num_strips * 2 + 2);
+#endif
+
+#ifdef __HARDWARE_MAP
+#ifndef __NON_HEAP
+        _hmap = (uint16_t *)malloc(total_leds * 2);
+#endif
+        if (!_hmap)
+        {
+            ESP_LOGE(TAG, "no memory for the hamp");
+            return;
+        }
+        else
+        {
+            ESP_LOGE(TAG, "trying to map");
+            /*
+            for(int leddisp=0;leddisp<num_led_per_strip;leddisp++)
+            {
+                for (int i = 0; i < num_strips; i++)
+                {
+                    _hmap[i+leddisp*num_strips]=mapLed(leddisp+i*num_led_per_strip)*nb_components;
+                }
+            }
+            */
+            // int offset=0;
+            createhardwareMap();
+        }
+#endif
+        setBrightness(255);
+        /*
+        dmaBufferCount = 2;
+        this->leds = leds;
+        this->saveleds = leds;
+        this->num_led_per_strip = num_led_per_strip;
+        _offsetDisplay.offsetx = 0;
+        _offsetDisplay.offsety = 0;
+        _offsetDisplay.panel_width = num_led_per_strip;
+        _offsetDisplay.panel_height = 9999;
+        _defaultOffsetDisplay = _offsetDisplay;
+        linewidth = num_led_per_strip;
+        this->num_strips = num_strips;
+        this->dmaBufferCount = dmaBufferCount;*/
+
         setPins(Pinsq);
         i2sInit();
         initDMABuffers();
     }
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+    typedef dma_descriptor_t I2SClocklessLedDriverDMABuffer;
+#endif
 
-    //private:
-
-    // intr_handle_t I2SClocklessLedDriver_intr_handle;// = NULL;
-    //    xSemaphoreHandle I2SClocklessLedDriver_sem = NULL;
-    //   xSemaphoreHandle I2SClocklessLedDriver_semSync = NULL;
-    //   xSemaphoreHandle I2SClocklessLedDriver_semDisp= NULL;
-    //buffer array for the transposed leds
+    // buffer array for the transposed leds
     I2SClocklessLedDriverDMABuffer **DMABuffersTransposed = NULL;
-    //buffer array for the regular way
-    I2SClocklessLedDriverDMABuffer *DMABuffersTampon[4];
+    // buffer array for the regular way
+    I2SClocklessLedDriverDMABuffer *DMABuffersTampon[__NB_DMA_BUFFER + 2];
 
     I2SClocklessLedDriverDMABuffer *allocateDMABuffer(int bytes)
     {
@@ -1102,7 +1375,13 @@ Show pixels classiques
             return NULL;
         }
         memset(b->buffer, 0, bytes);
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+        b->dw0.owner = DMA_DESCRIPTOR_BUFFER_OWNER_DMA;
+        b->dw0.size = bytes;
+        b->dw0.length = bytes;
+        b->dw0.suc_eof = 1;
 
+#else
         b->descriptor.length = bytes;
         b->descriptor.size = bytes;
         b->descriptor.owner = 1;
@@ -1112,119 +1391,116 @@ Show pixels classiques
         b->descriptor.empty = 0;
         b->descriptor.eof = 1;
         b->descriptor.qe.stqe_next = 0;
-
+#endif
         return b;
     }
 
     void i2sReset_DMA()
     {
-
+#ifndef CONFIG_IDF_TARGET_ESP32S3
         (&I2S0)->lc_conf.out_rst = 1;
         (&I2S0)->lc_conf.out_rst = 0;
+#endif
     }
 
     void i2sReset_FIFO()
     {
-
+#ifndef CONFIG_IDF_TARGET_ESP32S3
         (&I2S0)->conf.tx_fifo_reset = 1;
         (&I2S0)->conf.tx_fifo_reset = 0;
+#endif
     }
-
-    void IRAM_ATTR i2sStop()
-    {
-
-       
-
-       // xSemaphoreGive(I2SClocklessLedDriver_semDisp);
-        esp_intr_disable(_gI2SClocklessDriver_intr_handle);
-       
-
-        (&I2S0)->conf.tx_start = 0;
-        while( (&I2S0)->conf.tx_start ==1){}
-         i2sReset();
-         ets_delay_us(30);
-       // isDisplaying = false;
-        /*
-         We have finished to display the strips
-         */
-
-        //xSemaphoreGive(I2SClocklessLedDriver_semDisp);
-        isDisplaying =false;
-        if( __displayMode == NO_WAIT && wasWaitingtofinish == true)
+    /*
+        void   i2sStop()
         {
-            // REG_WRITE(I2S_INT_CLR_REG(0), (REG_READ(I2S_INT_RAW_REG(0)) & 0xffffffc0) | 0x3f);
-         //portBASE_TYPE HPTaskAwoken = 0;
-               
-               wasWaitingtofinish = false;
-                  xSemaphoreGive(I2SClocklessLedDriver_semDisp);
-                 
-        }
-    
-        leds=saveleds;
-    }
+
+            esp_intr_disable(_gI2SClocklessDriver_intr_handle);
+
+    ets_delay_us(16);
+            (&I2S0)->conf.tx_start = 0;
+            while( (&I2S0)->conf.tx_start ==1){}
+             i2sReset();
+
+                 isDisplaying =false;
+
+
+            if(  wasWaitingtofinish == true)
+            {
+
+                   wasWaitingtofinish = false;
+                      xSemaphoreGive(I2SClocklessLedDriver_waitDisp);
+
+            }
+
+
+        } */
 
     void putdefaultones(uint16_t *buffer)
     {
-        /*order to push the data to the pins
-         0:D7
-         1:1
-         2:1
-         3:0
-         4:0
-         5:D6
-         6:D5
-         7:1
-         8:1
-         9:0
-         10:0
-         11:D4
-         12:D3
-         13:1
-         14:1
-         15:0
-         16:0
-         17:D2
-         18:D1
-         19:1
-         20:1
-         21:0
-         22:0
-         23:D0
-         */
+/*order to push the data to the pins
+ 0:D7
+ 1:1
+ 2:1
+ 3:0
+ 4:0
+ 5:D6
+ 6:D5
+ 7:1
+ 8:1
+ 9:0
+ 10:0
+ 11:D4
+ 12:D3
+ 13:1
+ 14:1
+ 15:0
+ 16:0
+ 17:D2
+ 18:D1
+ 19:1
+ 20:1
+ 21:0
+ 22:0
+ 23:D0
+ */
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+        for (int i = 0; i < nb_components * 8; i++)
+        {
+            buffer[i * 3 + 0] = 0xffff;
+            // buffer[i * 6 + 2] = 0xffff;
+        }
+#else
         for (int i = 0; i < nb_components * 8 / 2; i++)
         {
             buffer[i * 6 + 1] = 0xffff;
             buffer[i * 6 + 2] = 0xffff;
         }
+#endif
     }
-
-    /*
-     Transpose the pixel, as the function is static and all the variables are not static or global, we need to provide all of them.
-     */
-
-    //    void transpose16x1_noinline2(uint8_t y,uint16_t *B,uint16_t mask,uint16_t mask2,int stripNumber) {
-    //
-    //        *((uint16_t*)(B)) =   (*((uint16_t*)(B))& mask) | ((uint16_t)((y &   128)>>7) <<stripNumber);
-    //        *((uint16_t*)(B+5)) =   (*((uint16_t*)(B+5))& mask) | ((uint16_t)((y & 64)>>6) <<stripNumber);
-    //        *((uint16_t*)(B+6)) =   (*((uint16_t*)(B+6))& mask) | ((uint16_t)((y & 32)>>5) <<stripNumber);
-    //        *((uint16_t*)(B+11)) =   (*((uint16_t*)(B+11))& mask) | ((uint16_t)((y& 16)>>4)<<stripNumber);
-    //        *((uint16_t*)(B+12)) =   (*((uint16_t*)(B+12))& mask) | ((uint16_t)((y& 8)>>3) <<stripNumber);
-    //        *((uint16_t*)(B+17)) =   (*((uint16_t*)(B+17))& mask) | ((uint16_t)((y& 4)>>2) <<stripNumber);
-    //        *((uint16_t*)(B+18)) =   (*((uint16_t*)(B+18))& mask) | ((uint16_t)((y& 2)>>1) <<stripNumber);
-    //        *((uint16_t*)(B+23)) =   (*((uint16_t*)(B+23))& mask) | ((uint16_t)(y & 1) <<stripNumber);
-    //
-    //    }
 
     void i2sStart(I2SClocklessLedDriverDMABuffer *startBuffer)
     {
+#ifdef CONFIG_IDF_TARGET_ESP32S3
 
+        LCD_CAM.lcd_user.lcd_start = 0;
+        gdma_reset(dma_chan);
+        LCD_CAM.lcd_user.lcd_dout = 1;   // Enable data out
+        LCD_CAM.lcd_user.lcd_update = 1; // Update registers
+        LCD_CAM.lcd_misc.lcd_afifo_reset = 1;
+
+        //    memset(startBuffer->buffer,0,WS2812_DMA_DESCRIPTOR_BUFFER_MAX_SIZE);
+        gdma_start(dma_chan, (intptr_t)startBuffer); // Start DMA w/updated descriptor(s)
+        // esp_intr_enable(dma_chan->intr);
+        // vTaskDelay(1);                         // Must 'bake' a moment before...
+        LCD_CAM.lcd_user.lcd_start = 1;
+#else
         i2sReset();
         framesync = false;
         counti = 0;
 
         (&I2S0)->lc_conf.val = I2S_OUT_DATA_BURST_EN | I2S_OUTDSCR_BURST_EN | I2S_OUT_DATA_BURST_EN;
 
-        (&I2S0)->out_link.addr = (uint32_t) & (startBuffer->descriptor);
+        (&I2S0)->out_link.addr = (uint32_t)&(startBuffer->descriptor);
 
         (&I2S0)->out_link.start = 1;
 
@@ -1236,31 +1512,139 @@ Show pixels classiques
         /*
          If we do not use the regular showpixels, then no need to activate the interupt at the end of each pixels
          */
-        //if(transpose)
+        // if(transpose)
         (&I2S0)->int_ena.out_eof = 1;
 
         (&I2S0)->int_ena.out_total_eof = 1;
         esp_intr_enable(_gI2SClocklessDriver_intr_handle);
 
-        //We start the I2S
+        // We start the I2S
         (&I2S0)->conf.tx_start = 1;
-
-        //Set the mode to indicate that we've started
+#endif
+        // Set the mode to indicate that we've started
         isDisplaying = true;
     }
 
     void IRAM_ATTR i2sReset()
     {
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+        gdma_reset(dma_chan);
+        LCD_CAM.lcd_misc.lcd_afifo_reset = 1;
+#else
         const unsigned long lc_conf_reset_flags = I2S_IN_RST_M | I2S_OUT_RST_M | I2S_AHBM_RST_M | I2S_AHBM_FIFO_RST_M;
         (&I2S0)->lc_conf.val |= lc_conf_reset_flags;
         (&I2S0)->lc_conf.val &= ~lc_conf_reset_flags;
         const uint32_t conf_reset_flags = I2S_RX_RESET_M | I2S_RX_FIFO_RESET_M | I2S_TX_RESET_M | I2S_TX_FIFO_RESET_M;
         (&I2S0)->conf.val |= conf_reset_flags;
         (&I2S0)->conf.val &= ~conf_reset_flags;
+#endif
     }
 
     // static void IRAM_ATTR interruptHandler(void *arg);
 };
+static void IRAM_ATTR i2sStop(I2SClocklessLedDriver *cont)
+{
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+
+    // gdma_disconnect(dma_chan);
+    LCD_CAM.lcd_user.lcd_start = 0;
+
+    while (LCD_CAM.lcd_user.lcd_start)
+    {
+    }
+    gdma_stop(dma_chan);
+    // esp_intr_disable(dma_chan->intr);
+#else
+    esp_intr_disable(cont->_gI2SClocklessDriver_intr_handle);
+
+    ets_delay_us(16);
+    (&I2S0)->conf.tx_start = 0;
+    while ((&I2S0)->conf.tx_start == 1)
+    {
+    }
+#endif
+    cont->i2sReset();
+
+    cont->isDisplaying = false;
+
+    if (cont->wasWaitingtofinish == true)
+    {
+
+        cont->wasWaitingtofinish = false;
+        xSemaphoreGive(cont->I2SClocklessLedDriver_waitDisp);
+    }
+    if (cont->isWaiting)
+    {
+        // printf("on debloqu\n");
+        xSemaphoreGive(cont->I2SClocklessLedDriver_sem);
+    }
+}
+
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+
+static IRAM_ATTR bool _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan,
+                                                             gdma_event_data_t *event_data, void *user_data)
+{
+    // This DMA callback seems to trigger a moment before the last data has
+    // issued (buffering between DMA & LCD peripheral?), so pause a moment
+    // before stopping LCD data out. The ideal delay may depend on the LCD
+    // clock rate...this one was determined empirically by monitoring on a
+    // logic analyzer. YMMV.
+    // vTaskDelay(100);
+    // The LCD peripheral stops transmitting at the end of the DMA xfer, but
+    // clear the lcd_start flag anyway -- we poll it in loop() to decide when
+    // the transfer has finished, and the same flag is set later to trigger
+    // the next transfer.
+    I2SClocklessLedDriver *cont = (I2SClocklessLedDriver *)user_data;
+
+    if (!cont->__enableDriver)
+    {
+        // cont->i2sStop(cont);
+        i2sStop(cont);
+        return true;
+    }
+
+    cont->framesync = !cont->framesync;
+
+    // cont->ledToDisplay_in[cont->ledToDisplay_out]=cont->ledToDisplay+1;
+    // cont->ledToDisplay_inbuffer[cont->ledToDisplay_out]=cont->dmaBufferActive;
+
+    if (cont->transpose)
+    {
+        cont->ledToDisplay = cont->ledToDisplay + 1;
+        if (cont->ledToDisplay < cont->num_led_per_strip)
+        {
+
+            loadAndTranspose(cont);
+
+            if (cont->ledToDisplay_out == (cont->num_led_per_strip - __NB_DMA_BUFFER)) // here it's not -1 because it takes time top have the change into account and it reread the buufer
+            {
+                cont->DMABuffersTampon[(cont->dmaBufferActive) % __NB_DMA_BUFFER]->next = (cont->DMABuffersTampon[__NB_DMA_BUFFER + 1]);
+                // cont->ledToDisplay_inbufferfor[cont->ledToDisplay_out]=cont->dmaBufferActive;
+            }
+
+            cont->dmaBufferActive = (cont->dmaBufferActive + 1) % __NB_DMA_BUFFER;
+        }
+        cont->ledToDisplay_out = cont->ledToDisplay_out + 1;
+        if (cont->ledToDisplay >= NUM_LEDS_PER_STRIP + __NB_DMA_BUFFER + 1)
+        {
+
+            i2sStop(cont);
+        }
+    }
+    else
+    {
+        if (cont->framesync)
+        {
+            portBASE_TYPE HPTaskAwoken = 0;
+            xSemaphoreGiveFromISR(cont->I2SClocklessLedDriver_semSync, &HPTaskAwoken);
+            if (HPTaskAwoken == pdTRUE)
+                portYIELD_FROM_ISR();
+        }
+    }
+    return true;
+}
+#else
 static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg)
 {
 #ifdef DO_NOT_USE_INTERUPT
@@ -1269,7 +1653,14 @@ static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg)
 #else
     I2SClocklessLedDriver *cont = (I2SClocklessLedDriver *)arg;
 
-    if (GET_PERI_REG_BITS(I2S_INT_ST_REG(I2S_DEVICE), I2S_OUT_EOF_INT_ST_V, I2S_OUT_EOF_INT_ST_S))
+    if (!cont->__enableDriver)
+    {
+        REG_WRITE(I2S_INT_CLR_REG(0), (REG_READ(I2S_INT_RAW_REG(0)) & 0xffffffc0) | 0x3f);
+        // ((I2SClocklessLedDriver *)arg)->i2sStop();
+        i2sStop(cont);
+        return;
+    }
+    if (GET_PERI_REG_BITS(I2S_INT_ST_REG(I2S_DEVICE), I2S_OUT_EOF_INT_ST_S, I2S_OUT_EOF_INT_ST_S))
     {
         cont->framesync = !cont->framesync;
 
@@ -1278,19 +1669,16 @@ static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg)
             cont->ledToDisplay++;
             if (cont->ledToDisplay < cont->num_led_per_strip)
             {
-                #ifdef ENABLE_HARDWARE_SCROLL
-                loadAndTranspose(cont->leds, cont->num_led_per_strip, cont->num_strips, cont->_offsetDisplay, (uint16_t *)cont->DMABuffersTampon[cont->dmaBufferActive]->buffer, cont->ledToDisplay, cont->__green_map, cont->__red_map, cont->__blue_map, cont->__white_map, cont->nb_components, cont->p_g, cont->p_r, cont->p_b);
-               #else
-               //loadAndTranspose(cont->leds, cont->stripSize, cont->num_strips, (uint16_t *)cont->DMABuffersTampon[cont->dmaBufferActive]->buffer, cont->ledToDisplay, cont->__green_map, cont->__red_map, cont->__blue_map, cont->__white_map, cont->nb_components, cont->p_g, cont->p_r, cont->p_b);
-               loadAndTranspose(cont);
-               #endif
 
-               if (cont->ledToDisplay == cont->num_led_per_strip - 3) //here it's not -1 because it takes time top have the change into account and it reread the buufer
+                loadAndTranspose(cont);
+
+                if (cont->ledToDisplay_out == cont->num_led_per_strip - __NB_DMA_BUFFER) // here it's not -1 because it takes time top have the change into account and it reread the buufer
                 {
-                    cont->DMABuffersTampon[cont->dmaBufferActive]->descriptor.qe.stqe_next = &(cont->DMABuffersTampon[3]->descriptor);
+                    cont->DMABuffersTampon[(cont->dmaBufferActive) % __NB_DMA_BUFFER]->descriptor.qe.stqe_next = &(cont->DMABuffersTampon[__NB_DMA_BUFFER + 1]->descriptor);
                 }
-                cont->dmaBufferActive = (cont->dmaBufferActive + 1) % 2;
+                cont->dmaBufferActive = (cont->dmaBufferActive + 1) % __NB_DMA_BUFFER;
             }
+             cont->ledToDisplay_out++;
         }
         else
         {
@@ -1304,34 +1692,22 @@ static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg)
         }
     }
 
-    if (GET_PERI_REG_BITS(I2S_INT_ST_REG(I2S_DEVICE), I2S_OUT_TOTAL_EOF_INT_ST_V, I2S_OUT_TOTAL_EOF_INT_ST_S))
+    if (GET_PERI_REG_BITS(I2S_INT_ST_REG(I2S_DEVICE), I2S_OUT_TOTAL_EOF_INT_ST_S, I2S_OUT_TOTAL_EOF_INT_ST_S))
     {
-
-             
-                 
-        ((I2SClocklessLedDriver *)arg)->i2sStop();
-        /*
-        if( cont->__displayMode == NO_WAIT && cont->wasWaitingtofinish == true)
-        {
-            // REG_WRITE(I2S_INT_CLR_REG(0), (REG_READ(I2S_INT_RAW_REG(0)) & 0xffffffc0) | 0x3f);
-         portBASE_TYPE HPTaskAwoken = 0;
-               cont->isDisplaying =false;
-               cont->wasWaitingtofinish = false;
-                  xSemaphoreGiveFromISR(((I2SClocklessLedDriver *)arg)->I2SClocklessLedDriver_semDisp, &HPTaskAwoken);
-                  if(HPTaskAwoken == pdTRUE) portYIELD_FROM_ISR(HPTaskAwoken);
-        }*/
+        // ((I2SClocklessLedDriver *)arg)->i2sStop();
+        i2sStop(cont);
         if (cont->isWaiting)
         {
             portBASE_TYPE HPTaskAwoken = 0;
             xSemaphoreGiveFromISR(cont->I2SClocklessLedDriver_sem, &HPTaskAwoken);
             if (HPTaskAwoken == pdTRUE)
-                portYIELD_FROM_ISR(HPTaskAwoken);
+                portYIELD_FROM_ISR();
         }
     }
     REG_WRITE(I2S_INT_CLR_REG(0), (REG_READ(I2S_INT_RAW_REG(0)) & 0xffffffc0) | 0x3f);
 #endif
 }
-
+#endif
 static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B)
 {
 
@@ -1357,24 +1733,24 @@ static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B)
 
     // pre-transform x
 #if NUMSTRIPS > 4
-    t = (x ^ (x >> 7)) & AA;
+    t = (x ^ (x >> 7)) & AAA;
     x = x ^ t ^ (t << 7);
     t = (x ^ (x >> 14)) & CC;
     x = x ^ t ^ (t << 14);
 #endif
 #if NUMSTRIPS > 12
-    t = (x1 ^ (x1 >> 7)) & AA;
+    t = (x1 ^ (x1 >> 7)) & AAA;
     x1 = x1 ^ t ^ (t << 7);
     t = (x1 ^ (x1 >> 14)) & CC;
     x1 = x1 ^ t ^ (t << 14);
 #endif
     // pre-transform y
-    t = (y ^ (y >> 7)) & AA;
+    t = (y ^ (y >> 7)) & AAA;
     y = y ^ t ^ (t << 7);
     t = (y ^ (y >> 14)) & CC;
     y = y ^ t ^ (t << 14);
 #if NUMSTRIPS > 8
-    t = (y1 ^ (y1 >> 7)) & AA;
+    t = (y1 ^ (y1 >> 7)) & AAA;
     y1 = y1 ^ t ^ (t << 7);
     t = (y1 ^ (y1 >> 14)) & CC;
     y1 = y1 ^ t ^ (t << 14);
@@ -1388,6 +1764,18 @@ static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B)
     y1 = ((x1 << 4) & FF) | (y1 & FF2);
     x1 = t;
 
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+    *((uint16_t *)(B + 1)) = (uint16_t)(((x & 0xff000000) >> 8 | ((x1 & 0xff000000))) >> 16);
+    *((uint16_t *)(B + 4)) = (uint16_t)(((x & 0xff0000) >> 16 | ((x1 & 0xff0000) >> 8)));
+    *((uint16_t *)(B + 7)) = (uint16_t)(((x & 0xff00) | ((x1 & 0xff00) << 8)) >> 8);
+    *((uint16_t *)(B + 10)) = (uint16_t)((x & 0xff) | ((x1 & 0xff) << 8));
+    *((uint16_t *)(B + 13)) = (uint16_t)(((y & 0xff000000) >> 8 | ((y1 & 0xff000000))) >> 16);
+    *((uint16_t *)(B + 16)) = (uint16_t)(((y & 0xff0000) | ((y1 & 0xff0000) << 8)) >> 16);
+    *((uint16_t *)(B + 19)) = (uint16_t)(((y & 0xff00) | ((y1 & 0xff00) << 8)) >> 8);
+    *((uint16_t *)(B + 22)) = (uint16_t)((y & 0xff) | ((y1 & 0xff) << 8));
+
+#else
+
     *((uint16_t *)(B)) = (uint16_t)(((x & 0xff000000) >> 8 | ((x1 & 0xff000000))) >> 16);
     *((uint16_t *)(B + 5)) = (uint16_t)(((x & 0xff0000) >> 16 | ((x1 & 0xff0000) >> 8)));
     *((uint16_t *)(B + 6)) = (uint16_t)(((x & 0xff00) | ((x1 & 0xff00) << 8)) >> 8);
@@ -1396,191 +1784,68 @@ static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B)
     *((uint16_t *)(B + 17)) = (uint16_t)(((y & 0xff0000) | ((y1 & 0xff0000) << 8)) >> 16);
     *((uint16_t *)(B + 18)) = (uint16_t)(((y & 0xff00) | ((y1 & 0xff00) << 8)) >> 8);
     *((uint16_t *)(B + 23)) = (uint16_t)((y & 0xff) | ((y1 & 0xff) << 8));
+#endif
 }
 
-#ifdef ENABLE_HARDWARE_SCROLL
-static void IRAM_ATTR loadAndTranspose(uint8_t *ledt, int led_per_strip, int num_stripst, OffsetDisplay offdisp, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb)
-{
-    Lines secondPixel[nbcomponents];
-
-    uint32_t offp, offi, offsetled;
-    uint8_t _g, _r, _b;
-    int x, y, X, Y, deltaY;
-    deltaY = led_per_strip / offdisp.panel_width; //calculation of height per strip
-    //printf("li%d:\n",line_width);
-    y = ledtodisp / offdisp.panel_width;
-    x = ledtodisp % offdisp.panel_width;
-    Y = y;
-    X = x;
-#if SNAKEPATTERN == 1
-
-    //move in y
-    if (MOD(offdisp.offsety + 2 * y, offdisp.panel_height) % 2 == 0)
-    {
-        y = MOD(offdisp.offsety + y, offdisp.panel_height);
-    }
-    else
-    {
-        y = MOD(offdisp.offsety + y, offdisp.panel_height);
-        x = offdisp.panel_width - x - 1;
-    }
-
-    //move in x
-    if (y % 2 == 0)
-    {
-        //x=ledtodisp%offdisp.panel_width;
-        // off=((x+startleds)%line_width)+y*line_width;
-        offi = MOD(x + offdisp.offsetx, offdisp.panel_width) + y * offdisp.panel_width;
-#if ALTERNATEPATTERN == 1
-        offp = MOD(x - offdisp.offsetx, offdisp.panel_width) + y * offdisp.panel_width;
-#else
-        offp = offi;
-#endif
-    }
-    else
-    {
-        //x=ledtodisp%offdisp.panel_width;
-        //off=(line_width-x-startleds+1)%line_width+y*line_width;
-        offi = MOD(x - offdisp.offsetx, offdisp.panel_width) + y * offdisp.panel_width;
-#if ALTERNATEPATTERN == 1
-        offp = MOD(x + offdisp.offsetx, offdisp.panel_width) + y * offdisp.panel_width;
-#else
-        offp = offi;
-#endif
-    }
-
-#else
-    //x = ledtodisp % offdisp.panel_width;
-    offi = ((x + offdisp.offsetx) % offdisp.panel_width) + y * offdisp.panel_width;
-#if ALTERNATEPATTERN == 1
-    offp = MOD(x - offdisp.offsetx, offdisp.panel_width) + y * offdisp.panel_width;
-#else
-    offp = offi;
-#endif
-#endif
-
-    // uint8_t *poli = ledt + ((ledtodisp+startleds)%led_per_strip) * nbcomponents;
-    offi = offi * nbcomponents;
-    offp = offp * nbcomponents;
-    uint8_t *poli = ledt + offi;
-    offsetled = ledtodisp;
-    for (int i = 0; i < num_stripst; i++)
-    {
-
-        if (poli >= ledt + (uint32_t)offdisp.panel_width * offdisp.panel_height * nbcomponents)
-        {
-            //Serial.printf("%d %d %d\n",i,ledtodisp,((uint32_t)poli - (uint32_t)offdisp.panel_width * offdisp.panel_height * nbcomponents-(uint32_t)ledt))/3;
-            poli = poli - (uint32_t)offdisp.panel_width * offdisp.panel_height * nbcomponents;
-        }
-        else
-        {
-            if (poli < ledt)
-            {
-                //Serial.printf("neg %d %d %d\n",i,ledtodisp,(ledt-poli)/3);
-                poli += (uint32_t)offdisp.panel_width * offdisp.panel_height * nbcomponents;
-            }
-        }
-        /*
-            
-        */
-#if HARDWARESPRITES == 1
-        //res re=RE(offsetled);
-        if (target[offsetled] == 0)
-        {
-            _g = *(poli + 1);
-            _r = *(poli);
-            _b = *(poli + 2);
-        }
-        else
-        {
-            _g = _spritesleds[target[offsetled] - 1 + 1];
-            _r = _spritesleds[target[offsetled] - 1];
-            _b = _spritesleds[target[offsetled] - 1 + 2];
-        }
-#else
-        _g = *(poli + 1);
-        _r = *(poli);
-        _b = *(poli + 2);
-#endif
-
-        secondPixel[pg].bytes[i] = mapg[_g];
-        secondPixel[pr].bytes[i] = mapr[_r];
-        secondPixel[pb].bytes[i] = mapb[_b];
-        if (nbcomponents > 3)
-            secondPixel[3].bytes[i] = mapw[*(poli + 3)];
-
-        poli += led_per_strip * nbcomponents;
-#if HARDWARESPRITES == 1
-        offsetled += led_per_strip;
-#endif
-        Y += deltaY;
-
-        if (i % 2 == 0)
-        {
-            poli = poli - offi + offp;
-        }
-        else
-        {
-            poli = poli - offp + offi;
-        }
-    }
-
-    transpose16x1_noinline2(secondPixel[0].bytes, (uint16_t *)buffer);
-    transpose16x1_noinline2(secondPixel[1].bytes, (uint16_t *)buffer + 3 * 8);
-    transpose16x1_noinline2(secondPixel[2].bytes, (uint16_t *)buffer + 2 * 3 * 8);
-    if (nbcomponents > 3)
-        transpose16x1_noinline2(secondPixel[3].bytes, (uint16_t *)buffer + 3 * 3 * 8);
-}
-
-#else
-static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver *driver)//uint8_t *ledt, int *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb)
+static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver *driver) // uint8_t *ledt, int *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb)
 {
 
-    //cont->leds, cont->stripSize, cont->num_strips, (uint16_t *)cont->DMABuffersTampon[cont->dmaBufferActive]->buffer, cont->ledToDisplay, cont->__green_map, cont->__red_map, cont->__blue_map, cont->__white_map, cont->nb_components, cont->p_g, cont->p_r, cont->p_b);
-    int nbcomponents=driver->nb_components;
+    // cont->leds, cont->stripSize, cont->num_strips, (uint16_t *)cont->DMABuffersTampon[cont->dmaBufferActive]->buffer, cont->ledToDisplay, cont->__green_map, cont->__red_map, cont->__blue_map, cont->__white_map, cont->nb_components, cont->p_g, cont->p_r, cont->p_b);
+    int nbcomponents = driver->nb_components;
     Lines secondPixel[nbcomponents];
-    uint16_t *buffer=(uint16_t *)driver->DMABuffersTampon[driver->dmaBufferActive]->buffer;
-    uint16_t led_tmp=driver->ledToDisplay;
-    #ifdef __HARDWARE_MAP
-        //led_tmp=driver->ledToDisplay*driver->num_strips;
-    #endif
-    memset(secondPixel,0,sizeof(secondPixel));
-    #ifdef _LEDMAPPING
-        //#ifdef __SOFTWARE_MAP
-            uint8_t *poli ;
-        //#endif
-   #else
-     uint8_t *poli = driver->leds + driver->ledToDisplay * nbcomponents;
-   #endif
+    uint16_t *buffer;
+    if (driver->transpose)
+        buffer = (uint16_t *)driver->DMABuffersTampon[driver->dmaBufferActive]->buffer;
+    else
+        buffer = (uint16_t *)driver->DMABuffersTransposed[driver->dmaBufferActive]->buffer;
+
+    uint16_t led_tmp = driver->ledToDisplay;
+#ifdef __HARDWARE_MAP
+    // led_tmp=driver->ledToDisplay*driver->num_strips;
+#endif
+    memset(secondPixel, 0, sizeof(secondPixel));
+#ifdef _LEDMAPPING
+    // #ifdef __SOFTWARE_MAP
+    uint8_t *poli;
+    // #endif
+#else
+    uint8_t *poli = driver->leds + driver->ledToDisplay * nbcomponents;
+#endif
     for (int i = 0; i < driver->num_strips; i++)
     {
 
-        if(driver->ledToDisplay < driver->stripSize[i])
+        if (driver->ledToDisplay < driver->stripSize[i])
         {
-        #ifdef _LEDMAPPING
-            #ifdef __SOFTWARE_MAP
-                poli = driver->leds + driver->mapLed(led_tmp) * nbcomponents;
-            #endif
-            #ifdef __HARDWARE_MAP
-                poli = driver->leds + *(driver->_hmapoff);
-            #endif
-        #endif
-        secondPixel[driver->p_g].bytes[i] = driver->__green_map[*(poli + 1)];
-        secondPixel[driver->p_r].bytes[i] = driver->__red_map[*(poli + 0)];
-        secondPixel[driver->p_b].bytes[i] =  driver->__blue_map[*(poli + 2)];
-        if (nbcomponents > 3)
-            secondPixel[3].bytes[i] = driver->__white_map[*(poli + 3)];
-        #ifdef __HARDWARE_MAP
+#ifdef _LEDMAPPING
+#ifdef __SOFTWARE_MAP
+            poli = driver->leds + driver->mapLed(led_tmp) * nbcomponents;
+#endif
+#ifdef __HARDWARE_MAP
+            poli = driver->leds + *(driver->_hmapoff);
+#endif
+#ifdef __HARDWARE_MAP_PROGMEM
+            poli = driver->leds + pgm_read_word_near(driver->_hmap + driver->_hmapoff);
+#endif
+#endif
+            secondPixel[driver->p_g].bytes[i] = driver->__green_map[*(poli + 1)];
+            secondPixel[driver->p_r].bytes[i] = driver->__red_map[*(poli + 0)];
+            secondPixel[driver->p_b].bytes[i] = driver->__blue_map[*(poli + 2)];
+            if (nbcomponents > 3)
+                secondPixel[3].bytes[i] = driver->__white_map[*(poli + 3)];
+#ifdef __HARDWARE_MAP
             driver->_hmapoff++;
-        #endif
+#endif
+#ifdef __HARDWARE_MAP_PROGMEM
+            driver->_hmapoff++;
+#endif
         }
-      #ifdef _LEDMAPPING
-            #ifdef __SOFTWARE_MAP
-                led_tmp+=driver->stripSize[i];
-            #endif
-        #else
-         poli += driver->stripSize[i]* nbcomponents;
-        #endif
+#ifdef _LEDMAPPING
+#ifdef __SOFTWARE_MAP
+        led_tmp += driver->stripSize[i];
+#endif
+#else
+        poli += driver->stripSize[i] * nbcomponents;
+#endif
     }
 
     transpose16x1_noinline2(secondPixel[0].bytes, (uint16_t *)buffer);
@@ -1589,6 +1854,5 @@ static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver *driver)//uint8_t *
     if (nbcomponents > 3)
         transpose16x1_noinline2(secondPixel[3].bytes, (uint16_t *)buffer + 3 * 3 * 8);
 }
-#endif
 
 #endif
