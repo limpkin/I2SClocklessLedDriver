@@ -24,7 +24,7 @@
 #include <stdio.h>
 
 // #include "esp32-hal-log.h"//
-//#include <driver/periph_ctrl.h>
+#include <driver/periph_ctrl.h>
 #include <soc/gdma_channel.h>
 
 #include <hal/gdma_types.h>
@@ -428,7 +428,7 @@ public:
             esp_rom_gpio_connect_out_signal(Pins[i], signalsID[i], false, false);
            // gpio_hal_iomux_func_sel(GPIO_PIN_MUX_REG[Pins[i]], PIN_FUNC_GPIO);
            // gpio_hal_func_sel(GPIO_PIN_MUX_REG[Pins[i]], PIN_FUNC_GPIO);
-            gpio_iomux_output(Pins[i], PIN_FUNC_GPIO, false);
+            gpio_iomux_out(Pins[i], PIN_FUNC_GPIO, false);
             gpio_set_drive_capability((gpio_num_t)Pins[i], (gpio_drive_cap_t)3);
         }
 #endif
