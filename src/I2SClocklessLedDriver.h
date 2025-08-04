@@ -23,8 +23,8 @@
 #include "freertos/semphr.h"
 #include <stdio.h>
 
-// #include "esp32-hal-log.h"
-#include <driver/periph_ctrl.h>
+// #include "esp32-hal-log.h"//
+//#include <driver/periph_ctrl.h>
 #include <soc/gdma_channel.h>
 
 #include <hal/gdma_types.h>
@@ -428,7 +428,7 @@ public:
             esp_rom_gpio_connect_out_signal(Pins[i], signalsID[i], false, false);
            // gpio_hal_iomux_func_sel(GPIO_PIN_MUX_REG[Pins[i]], PIN_FUNC_GPIO);
            // gpio_hal_func_sel(GPIO_PIN_MUX_REG[Pins[i]], PIN_FUNC_GPIO);
-            gpio_iomux_out(Pins[i], PIN_FUNC_GPIO, false);
+            gpio_iomux_output(Pins[i], PIN_FUNC_GPIO, false);
             gpio_set_drive_capability((gpio_num_t)Pins[i], (gpio_drive_cap_t)3);
         }
 #endif
@@ -525,7 +525,9 @@ public:
     */
         // Enable DMA transfer callback
         gdma_tx_event_callbacks_t tx_cbs = {
-            .on_trans_eof = _I2SClocklessLedDriverinterruptHandler};
+            .on_trans_eof = _I2SClocklessLedDriverinterruptHandler,
+            .on_descr_err = NULL
+        };
         gdma_register_tx_event_callbacks(dma_chan, &tx_cbs, this);
         // esp_intr_disable((*dma_chan).intr);
         LCD_CAM.lcd_user.lcd_start = 0;
@@ -1814,7 +1816,7 @@ static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver *driver) // uint8_t
     else
         buffer = (uint16_t *)driver->DMABuffersTransposed[driver->dmaBufferActive]->buffer;
 
-    uint16_t led_tmp = driver->ledToDisplay;
+   // uint16_t led_tmp = driver->ledToDisplay;
 #ifdef __HARDWARE_MAP
     // led_tmp=driver->ledToDisplay*driver->num_strips;
 #endif
