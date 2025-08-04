@@ -6,7 +6,8 @@
 
 #ifndef __I2S_CLOCKLESS_DRIVER_H
 #define __I2S_CLOCKLESS_DRIVER_H
-
+#undef TAG
+#define TAG "I2SCLD"
 #pragma once
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
@@ -460,8 +461,7 @@ struct OffsetDisplay
     int panel_width;
 };
 //static const char *TAG = "I2SClocklessLedDriver";
-#undef TAG
-#define TAG "I2SCLD"
+
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
 //static bool IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data);
