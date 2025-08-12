@@ -44,6 +44,74 @@
 #include "soc/periph_defs.h"
 #include "soc/soc_caps.h"
 #include "soc/gdma_periph.h"
+#include "esp_private/critical_section.h"
+//#include "esp_hw_support/dma/gdma_priv.h"
+#include "esp_private/gdma.h"
+
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+    int globalpairId = -1;
+
+    typedef struct gdma_pair_t gdma_pair_t;
+    typedef struct gdma_channel_t gdma_channel_t;
+    typedef struct gdma_tx_channel_t gdma_tx_channel_t;
+    typedef struct gdma_rx_channel_t gdma_rx_channel_t;
+
+  typedef struct gdma_group_t {
+    int group_id; // Group ID, index from 0
+    int bus_id;   // which system does the GDMA instance attached to
+    gdma_hal_context_t hal; // HAL instance is at group level
+    portMUX_TYPE spinlock;  // group level spinlock, protect group level stuffs, e.g. hal object, pair handle slots and reference count of each pair
+    uint32_t tx_periph_in_use_mask; // each bit indicates which peripheral (TX direction) has been occupied
+    uint32_t rx_periph_in_use_mask; // each bit indicates which peripheral (RX direction) has been occupied
+    gdma_pair_t *pairs[SOC_GDMA_PAIRS_PER_GROUP_MAX];  // handles of GDMA pairs
+    int pair_ref_counts[SOC_GDMA_PAIRS_PER_GROUP_MAX]; // reference count used to protect pair install/uninstall
+} gdma_group_t;
+
+struct gdma_pair_t {
+    gdma_group_t *group;        // which group the pair belongs to
+    int pair_id;                // Pair ID, index from 0
+    gdma_tx_channel_t *tx_chan; // pointer of tx channel in the pair
+    gdma_rx_channel_t *rx_chan; // pointer of rx channel in the pair
+    int occupy_code;            // each bit indicates which channel has been occupied (an occupied channel will be skipped during channel search)
+    portMUX_TYPE spinlock;      // pair level spinlock, protect pair level stuffs, e.g. channel handle slots, occupy code
+};
+
+struct gdma_channel_t {
+    gdma_pair_t *pair;  // which pair the channel belongs to
+    intr_handle_t intr; // per-channel interrupt handle
+    portMUX_TYPE spinlock;  // channel level spinlock
+    gdma_channel_direction_t direction; // channel direction
+    int periph_id; // Peripheral instance ID, indicates which peripheral is connected to this GDMA channel
+    size_t int_mem_alignment; // alignment for memory in internal memory
+    size_t ext_mem_alignment; // alignment for memory in external memory
+    esp_err_t (*del)(gdma_channel_t *channel); // channel deletion function, it's polymorphic, see `gdma_del_tx_channel` or `gdma_del_rx_channel`
+    struct {
+        uint32_t start_stop_by_etm: 1; // whether the channel is started/stopped by ETM
+        uint32_t isr_cache_safe: 1; // whether the interrupt of this channel need to be cache safe
+    } flags;
+};
+
+struct gdma_tx_channel_t {
+    gdma_channel_t base; // GDMA channel, base class
+    void *user_data;     // user registered DMA event data
+    gdma_tx_event_callbacks_t cbs;      // TX event callbacks
+};
+
+struct gdma_rx_channel_t {
+    gdma_channel_t base; // GDMA channel, base class
+    void *user_data;     // user registered DMA event data
+    gdma_rx_event_callbacks_t cbs;      // RX event callbacks
+};
+
+    #ifdef __cplusplus
+}
+#endif
+
+
 // #endif
 #ifdef OVER_CLOCK_MAX
 #define CLOCK_DIV_NUM 4
@@ -227,7 +295,14 @@ typedef union
     uint32_t shorts[8];
     uint32_t raw[2];
 } Lines;
+#undef TAG
+#define TAG "I2SCLD"
 
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+static bool IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data);
+#else
+static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg);
+#endif
 #ifdef CONFIG_IDF_TARGET_ESP32S3
 static uint8_t signalsID[16] = {
     LCD_DATA_OUT0_IDX,
@@ -249,7 +324,107 @@ static uint8_t signalsID[16] = {
 
 };
 static gdma_channel_handle_t dma_chan;
+void IRAM_ATTR _gdma_default_tx_isr(void *args)
+{
+    gdma_tx_channel_t *tx_chan = (gdma_tx_channel_t *)args;
+    gdma_pair_t *pair = tx_chan->base.pair;
+    gdma_group_t *group = pair->group;
+    gdma_hal_context_t *hal = &group->hal;
+    int pair_id = pair->pair_id;
+    bool need_yield = false;
+    // clear pending interrupt event
+    uint32_t intr_status = gdma_hal_read_intr_status(hal, pair_id, GDMA_CHANNEL_DIRECTION_TX, false);
+    gdma_hal_clear_intr(hal, pair_id, GDMA_CHANNEL_DIRECTION_TX, intr_status);
 
+    if ((intr_status & GDMA_LL_EVENT_TX_EOF) && tx_chan->cbs.on_trans_eof) {
+        uint32_t eof_addr = gdma_hal_get_eof_desc_addr(hal, pair_id, GDMA_CHANNEL_DIRECTION_TX, true);
+        gdma_event_data_t edata = {
+            .tx_eof_desc_addr = eof_addr,
+             .flags = {
+            .abnormal_eof = false,
+            .normal_eof = true
+             }
+
+        };
+        need_yield |= tx_chan->cbs.on_trans_eof(&tx_chan->base, &edata, tx_chan->user_data);
+    }
+    if ((intr_status & GDMA_LL_EVENT_TX_DESC_ERROR) && tx_chan->cbs.on_descr_err) {
+        need_yield |= tx_chan->cbs.on_descr_err(&tx_chan->base, NULL, tx_chan->user_data);
+    }
+    if (need_yield) {
+        portYIELD_FROM_ISR();
+    }
+}
+static esp_err_t _gdma_install_tx_interrupt(gdma_tx_channel_t *tx_chan)
+{
+    esp_err_t ret = ESP_OK;
+    gdma_pair_t *pair = tx_chan->base.pair;
+    gdma_group_t *group = pair->group;
+    gdma_hal_context_t *hal = &group->hal;
+    int pair_id = pair->pair_id;
+    // pre-alloc a interrupt handle, with handler disabled
+    int isr_flags = ESP_INTR_FLAG_INTRDISABLED | ESP_INTR_FLAG_LOWMED;
+    if (tx_chan->base.flags.isr_cache_safe) {
+        isr_flags |= ESP_INTR_FLAG_IRAM;
+    }
+#if GDMA_LL_AHB_TX_RX_SHARE_INTERRUPT
+    isr_flags |= ESP_INTR_FLAG_SHARED;
+#endif
+    intr_handle_t intr = NULL;
+    ret = esp_intr_alloc_intrstatus(gdma_periph_signals.groups[group->group_id].pairs[pair_id].tx_irq_id, isr_flags,
+                                    gdma_hal_get_intr_status_reg(hal, pair_id, GDMA_CHANNEL_DIRECTION_TX), GDMA_LL_TX_EVENT_MASK,
+                                    _gdma_default_tx_isr, tx_chan, &intr);
+    ESP_GOTO_ON_ERROR(ret, err, TAG, "alloc interrupt failed");
+    tx_chan->base.intr = intr;
+
+    esp_os_enter_critical(&pair->spinlock);
+    gdma_hal_enable_intr(hal, pair_id, GDMA_CHANNEL_DIRECTION_TX, UINT32_MAX, false); // disable all interrupt events
+    gdma_hal_clear_intr(hal, pair_id, GDMA_CHANNEL_DIRECTION_TX, UINT32_MAX); // clear all pending events
+    esp_os_exit_critical(&pair->spinlock);
+    ESP_LOGD(TAG, "install interrupt service for tx channel (%d,%d)", group->group_id, pair_id);
+
+err:
+    return ret;
+}
+esp_err_t _gdma_register_tx_event_callbacks(gdma_channel_handle_t dma_chan, gdma_tx_event_callbacks_t *cbs, void *user_data)
+{
+    ESP_RETURN_ON_FALSE(dma_chan && cbs && dma_chan->direction == GDMA_CHANNEL_DIRECTION_TX, ESP_ERR_INVALID_ARG, TAG, "invalid argument");
+    gdma_pair_t *pair = dma_chan->pair;
+    gdma_group_t *group = pair->group;
+    gdma_hal_context_t *hal = &group->hal;
+    gdma_tx_channel_t *tx_chan = __containerof(dma_chan, gdma_tx_channel_t, base);
+
+    if (dma_chan->flags.isr_cache_safe) {
+        if (cbs->on_trans_eof) {
+            ESP_RETURN_ON_FALSE(esp_ptr_in_iram((const void *)cbs->on_trans_eof), ESP_ERR_INVALID_ARG,
+                                TAG, "on_trans_eof not in IRAM");
+        }
+        if (cbs->on_descr_err) {
+            ESP_RETURN_ON_FALSE(esp_ptr_in_iram((const void *)cbs->on_descr_err), ESP_ERR_INVALID_ARG,
+                                TAG, "on_descr_err not in IRAM");
+        }
+        if (user_data) {
+            ESP_RETURN_ON_FALSE(esp_ptr_internal(user_data), ESP_ERR_INVALID_ARG,
+                                TAG, "user context not in internal RAM");
+        }
+    }
+
+    // lazy install interrupt service
+    ESP_RETURN_ON_ERROR(_gdma_install_tx_interrupt(tx_chan), TAG, "install interrupt service failed");
+
+    // enable/disable GDMA interrupt events for TX channel
+    esp_os_enter_critical(&pair->spinlock);
+    gdma_hal_enable_intr(hal, pair->pair_id, GDMA_CHANNEL_DIRECTION_TX, GDMA_LL_EVENT_TX_EOF, cbs->on_trans_eof != NULL);
+    gdma_hal_enable_intr(hal, pair->pair_id, GDMA_CHANNEL_DIRECTION_TX, GDMA_LL_EVENT_TX_DESC_ERROR, cbs->on_descr_err != NULL);
+    esp_os_exit_critical(&pair->spinlock);
+
+    memcpy(&tx_chan->cbs, cbs, sizeof(gdma_tx_event_callbacks_t));
+    tx_chan->user_data = user_data;
+
+    ESP_RETURN_ON_ERROR(esp_intr_enable(dma_chan->intr), TAG, "enable interrupt failed");
+
+    return ESP_OK;
+}
 #endif
 class I2SClocklessLedDriver;
 struct OffsetDisplay
@@ -260,14 +435,7 @@ struct OffsetDisplay
     int panel_width;
 };
 //static const char *TAG = "I2SClocklessLedDriver";
-#undef TAG
-#define TAG "I2SCLD"
 
-#ifdef CONFIG_IDF_TARGET_ESP32S3
-static bool IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data);
-#else
-static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg);
-#endif
 static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B);
 /*
 #ifdef ENABLE_HARDWARE_SCROLL
@@ -514,7 +682,9 @@ public:
         gdma_connect(dma_chan, GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_LCD, 0));
         gdma_strategy_config_t strategy_config = {
             .owner_check = false,
-            .auto_update_desc = false};
+            .auto_update_desc = false,
+            .eof_till_data_popped=true
+        };
         gdma_apply_strategy(dma_chan, &strategy_config);
         /*
         gdma_transfer_ability_t ability = {
@@ -528,7 +698,7 @@ public:
             .on_trans_eof = _I2SClocklessLedDriverinterruptHandler,
             .on_descr_err = NULL
         };
-        gdma_register_tx_event_callbacks(dma_chan, &tx_cbs, this);
+        _gdma_register_tx_event_callbacks(dma_chan, &tx_cbs, this);
         // esp_intr_disable((*dma_chan).intr);
         LCD_CAM.lcd_user.lcd_start = 0;
 #else
@@ -1599,7 +1769,7 @@ static void IRAM_ATTR i2sStop(I2SClocklessLedDriver *cont)
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
 
-static IRAM_ATTR bool _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan,
+static  bool _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan,
                                                              gdma_event_data_t *event_data, void *user_data)
 {
     // This DMA callback seems to trigger a moment before the last data has
@@ -1662,7 +1832,7 @@ static IRAM_ATTR bool _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle
     return true;
 }
 #else
-static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg)
+static void _I2SClocklessLedDriverinterruptHandler(void *arg)
 {
 #ifdef DO_NOT_USE_INTERUPT
     REG_WRITE(I2S_INT_CLR_REG(0), (REG_READ(I2S_INT_RAW_REG(0)) & 0xffffffc0) | 0x3f);
@@ -1725,7 +1895,7 @@ static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg)
 #endif
 }
 #endif
-static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B)
+static void  transpose16x1_noinline2(unsigned char *A, uint16_t *B)
 {
 
     uint32_t x, y, x1, y1, t;
@@ -1804,7 +1974,7 @@ static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B)
 #endif
 }
 
-static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver *driver) // uint8_t *ledt, int *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb)
+static void  loadAndTranspose(I2SClocklessLedDriver *driver) // uint8_t *ledt, int *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb)
 {
 
     // cont->leds, cont->stripSize, cont->num_strips, (uint16_t *)cont->DMABuffersTampon[cont->dmaBufferActive]->buffer, cont->ledToDisplay, cont->__green_map, cont->__red_map, cont->__blue_map, cont->__white_map, cont->nb_components, cont->p_g, cont->p_r, cont->p_b);
