@@ -296,7 +296,7 @@ typedef union
     uint32_t raw[2];
 } Lines;
 #undef TAG
-#define TAG "I2SCLD"
+#define TAG "I2SLCD"
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
 static bool IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data);
@@ -493,6 +493,11 @@ struct LedTiming
     uint8_t f2;
     uint8_t f3;
 };
+   static DRAM_ATTR uint8_t __green_map[256] ;
+   static DRAM_ATTR uint8_t __blue_map[256] ;
+    static DRAM_ATTR uint8_t __red_map[256] ;
+   static DRAM_ATTR uint8_t __white_map[256] ;
+    static  DRAM_ATTR Lines secondPixel[5];
 
 class I2SClocklessLedDriver
 {
@@ -513,10 +518,10 @@ public:
 #ifndef CONFIG_IDF_TARGET_ESP32S3
     i2s_dev_t *i2s;
 #endif
-    uint8_t __green_map[256];
-    uint8_t __blue_map[256];
-    uint8_t __red_map[256];
-    uint8_t __white_map[256];
+   // uint8_t __green_map[256];
+   // uint8_t __blue_map[256];
+   // uint8_t __red_map[256];
+   // uint8_t __white_map[256];
     uint8_t _brightness;
     float _gammar, _gammab, _gammag, _gammaw;
     intr_handle_t _gI2SClocklessDriver_intr_handle;
@@ -762,7 +767,7 @@ public:
         SET_PERI_REG_BITS(I2S_INT_ENA_REG(I2S_DEVICE), I2S_OUT_TOTAL_EOF_INT_ENA_V, 1, I2S_OUT_TOTAL_EOF_INT_ENA_S);
         SET_PERI_REG_BITS(I2S_INT_ENA_REG(I2S_DEVICE), I2S_OUT_TOTAL_EOF_INT_ENA_V, 1, I2S_OUT_TOTAL_EOF_INT_ENA_S);
         */
-        esp_err_t e = esp_intr_alloc(interruptSource, ESP_INTR_FLAG_INTRDISABLED | ESP_INTR_FLAG_LEVEL3 | ESP_INTR_FLAG_IRAM, &_I2SClocklessLedDriverinterruptHandler, this, &_gI2SClocklessDriver_intr_handle);
+         esp_intr_alloc(interruptSource, ESP_INTR_FLAG_INTRDISABLED | ESP_INTR_FLAG_LEVEL3 | ESP_INTR_FLAG_IRAM, &_I2SClocklessLedDriverinterruptHandler, this, &_gI2SClocklessDriver_intr_handle);
 #endif
         // -- Create a semaphore to block execution until all the controllers are done
 
@@ -1548,7 +1553,7 @@ public:
 
     I2SClocklessLedDriverDMABuffer *allocateDMABuffer(int bytes)
     {
-        I2SClocklessLedDriverDMABuffer *b = (I2SClocklessLedDriverDMABuffer *)heap_caps_malloc(sizeof(I2SClocklessLedDriverDMABuffer), MALLOC_CAP_DMA);
+        I2SClocklessLedDriverDMABuffer *b = (I2SClocklessLedDriverDMABuffer *)heap_caps_malloc(sizeof(I2SClocklessLedDriverDMABuffer), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
         if (!b)
         {
             ESP_LOGE(TAG, "No more memory\n");
@@ -1979,7 +1984,7 @@ static void  loadAndTranspose(I2SClocklessLedDriver *driver) // uint8_t *ledt, i
 
     // cont->leds, cont->stripSize, cont->num_strips, (uint16_t *)cont->DMABuffersTampon[cont->dmaBufferActive]->buffer, cont->ledToDisplay, cont->__green_map, cont->__red_map, cont->__blue_map, cont->__white_map, cont->nb_components, cont->p_g, cont->p_r, cont->p_b);
     int nbcomponents = driver->nb_components;
-    Lines secondPixel[nbcomponents];
+
     uint16_t *buffer;
     if (driver->transpose)
         buffer = (uint16_t *)driver->DMABuffersTampon[driver->dmaBufferActive]->buffer;
@@ -2014,11 +2019,11 @@ static void  loadAndTranspose(I2SClocklessLedDriver *driver) // uint8_t *ledt, i
             poli = driver->leds + pgm_read_word_near(driver->_hmap + driver->_hmapoff);
 #endif
 #endif
-            secondPixel[driver->p_g].bytes[i] = driver->__green_map[*(poli + 1)];
-            secondPixel[driver->p_r].bytes[i] = driver->__red_map[*(poli + 0)];
-            secondPixel[driver->p_b].bytes[i] = driver->__blue_map[*(poli + 2)];
+            secondPixel[driver->p_g].bytes[i] = __green_map[*(poli + 1)];
+            secondPixel[driver->p_r].bytes[i] = __red_map[*(poli + 0)];
+            secondPixel[driver->p_b].bytes[i] = __blue_map[*(poli + 2)];
             if (nbcomponents > 3)
-                secondPixel[3].bytes[i] = driver->__white_map[*(poli + 3)];
+                secondPixel[3].bytes[i] = __white_map[*(poli + 3)];
 #ifdef __HARDWARE_MAP
             driver->_hmapoff++;
 #endif
