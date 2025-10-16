@@ -412,7 +412,7 @@ public:
     volatile int counti;
 
     I2SClocklessLedDriver() {};
-    void setPins(int *Pins)
+    void setPins(uint8_t *Pins)
     {
 #ifndef CONFIG_IDF_TARGET_ESP32S3
         for (int i = 0; i < num_strips; i++)
@@ -928,7 +928,7 @@ public:
         setPixelinBuffer(pos, red, green, blue, W);
     }
 
-    void initled(int *Pinsq, int num_strips, int num_led_per_strip)
+    void initled(uint8_t *Pinsq, int num_strips, int num_led_per_strip)
     {
         initled(NULL, Pinsq, num_strips, num_led_per_strip);
     }
@@ -1165,12 +1165,12 @@ public:
     }
 
 #ifdef USE_PIXELSLIB
-    void initled(Pixels pix, int *Pinsq)
+    void initled(Pixels pix, uint8_t *Pinsq)
     {
         initled((uint8_t *)pix.getPixels(), Pinsq, pix.getLengths(), pix.getNumStrip());
     }
 #endif
-    void initled(uint8_t *leds, int *Pinsq, int *sizes, int num_strips)
+    void initled(uint8_t *leds, uint8_t *Pinsq, int *sizes, int num_strips)
     {
         total_leds = 0;
         for (int i = 0; i < num_strips; i++)
@@ -1188,7 +1188,7 @@ public:
         __initled(leds, Pinsq, num_strips, maximum);
     }
 
-    void initled(uint8_t *leds, int *Pinsq, int num_strips, int num_led_per_strip)
+    void initled(uint8_t *leds, uint8_t *Pinsq, int num_strips, int num_led_per_strip)
     {
         for (int i = 0; i < num_strips; i++)
         {
@@ -1197,7 +1197,7 @@ public:
         initled(leds, Pinsq, this->stripSize, num_strips);
     }
 
-    void initled(uint8_t *leds, int *Pinsq, int *sizes, int num_strips, colorarrangment cArr)
+    void initled(uint8_t *leds, uint8_t *Pinsq, int *sizes, int num_strips, colorarrangment cArr)
     {
         total_leds = 0;
         for (int i = 0; i < num_strips; i++)
@@ -1255,7 +1255,7 @@ public:
         __initled(leds, Pinsq, num_strips, maximum);
     }
 
-    void initled(uint8_t *leds, int *Pinsq, int num_strips, int num_led_per_strip, colorarrangment cArr)
+    void initled(uint8_t *leds, uint8_t *Pinsq, int num_strips, int num_led_per_strip, colorarrangment cArr)
     {
         for (int i = 0; i < num_strips; i++)
         {
@@ -1298,7 +1298,7 @@ public:
 #endif
     }
 
-    void __initled(uint8_t *leds, int *Pinsq, int num_strips, int num_led_per_strip)
+    void __initled(uint8_t *leds, uint8_t *Pinsq, int num_strips, int num_led_per_strip)
     {
         _gammab = 1;
         _gammar = 1;
