@@ -7,6 +7,9 @@
 // Flash: [======    ]  64.7% (used 847998 bytes from 1310720 bytes)
 
 #include "Arduino.h"
+
+#define NUM_LEDS_PER_STRIP 256
+#define NUMSTRIPS 6
 #include "I2SClocklessLedDriver.h"
 
 #if SETUP_WIFI
@@ -14,10 +17,6 @@
     #include "esp_event.h"
     #include "nvs_flash.h"
 #endif
-
-#define NUM_LEDS_PER_STRIP 256
-#define NUMSTRIPS 6
-
 
 //here we have 3 colors per pixel
 uint8_t leds[NUMSTRIPS*NUM_LEDS_PER_STRIP*3];

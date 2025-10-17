@@ -9,6 +9,15 @@
 
 #pragma once
 
+// October 2025: idf 5.5.0 check will be used to track recent changes which work in 5.5.0, maybe / probably also before but this ensures we do not break things on older versions
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+    #include <esp_private/periph_ctrl.h>
+    #include <esp_private/gpio.h>
+#else
+    #include <driver/periph_ctrl.h>
+    #include "driver/gpio.h"
+#endif
+
 #ifdef CONFIG_IDF_TARGET_ESP32S3
 
 #define GDMA_OUT_INT_CLR_REG(i) (DR_REG_GDMA_BASE + 0x74 + (192 * i))
@@ -24,7 +33,6 @@
 #include <stdio.h>
 
 // #include "esp32-hal-log.h"//
-#include <driver/periph_ctrl.h>
 #include <soc/gdma_channel.h>
 
 #include <hal/gdma_types.h>
@@ -37,7 +45,6 @@
 #include "freertos/task.h"
 // #include "hal/gpio_ll.h"
 #include "esp_rom_gpio.h"
-#include "driver/gpio.h"
 #include "esp_log.h"
 #include <hal/gdma_hal.h>
 #include "hal/gdma_ll.h"
@@ -86,8 +93,6 @@ clock_speed clock_800KHZ = {6, 4, 1};
 #include "soc/i2s_reg.h"
 #include "soc/i2s_struct.h"
 #include "soc/io_mux_reg.h"
-#include "driver/gpio.h"
-#include "driver/periph_ctrl.h"
 #include "rom/lldesc.h"
 #include <cstring>
 #include "freertos/FreeRTOS.h"
@@ -127,7 +132,9 @@ clock_speed clock_800KHZ = {6, 4, 1};
 #define FF (0xF0F0F0F0L)
 #define FF2 (0x0F0F0F0FL)
 
-#define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#ifndef MIN
+    #define MIN(a, b) (((a) < (b)) ? (a) : (b))
+#endif
 
 #ifndef HARDWARESPRITES
 #define HARDWARESPRITES 0
@@ -193,7 +200,7 @@ clock_speed clock_800KHZ = {6, 4, 1};
 #endif
 
 #ifndef NUM_LEDS_PER_STRIP
-#pragma message "NUM_LEDS_PER_STRIP not defined, using default 256"
+// #pragma message "NUM_LEDS_PER_STRIP not defined, using default 256"
 #define NUM_LEDS_PER_STRIP 256
 #endif
 
@@ -264,19 +271,19 @@ struct OffsetDisplay
 #define TAG "I2SCLD"
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
-static bool IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data);
+static bool _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data);
 #else
-static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg);
+static void _I2SClocklessLedDriverinterruptHandler(void *arg);
 #endif
-static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B);
+static void transpose16x1_noinline2(unsigned char *A, uint16_t *B);
 /*
 #ifdef ENABLE_HARDWARE_SCROLL
-static void IRAM_ATTR loadAndTranspose(uint8_t *ledt, int led_per_strip, int num_stripst, OffsetDisplay offdisp, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
+static void loadAndTranspose(uint8_t *ledt, int led_per_strip, int num_stripst, OffsetDisplay offdisp, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
 #else
-static void IRAM_ATTR loadAndTranspose(uint8_t *ledt, int *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
+static void loadAndTranspose(uint8_t *ledt, int *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
 #endif
 */
-static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver *driver);
+static void loadAndTranspose(I2SClocklessLedDriver *driver);
 
 enum colorarrangment
 {
@@ -428,8 +435,14 @@ public:
             esp_rom_gpio_connect_out_signal(Pins[i], signalsID[i], false, false);
            // gpio_hal_iomux_func_sel(GPIO_PIN_MUX_REG[Pins[i]], PIN_FUNC_GPIO);
            // gpio_hal_func_sel(GPIO_PIN_MUX_REG[Pins[i]], PIN_FUNC_GPIO);
-            gpio_iomux_out(Pins[i], PIN_FUNC_GPIO, false);
-            gpio_set_drive_capability((gpio_num_t)Pins[i], (gpio_drive_cap_t)3);
+
+            #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+                gpio_iomux_output((gpio_num_t)Pins[i], PIN_FUNC_GPIO); //suppress warning, ready for idf 6, see https://github.com/espressif/esp-idf/issues/17052
+            #else
+                gpio_iomux_out(Pins[i], PIN_FUNC_GPIO, false);
+            #endif
+
+            gpio_set_drive_capability((gpio_num_t)Pins[i], GPIO_DRIVE_CAP_3);
         }
 #endif
     }
@@ -504,13 +517,23 @@ public:
         LCD_CAM.lcd_user.lcd_cmd = 0;            // No command at LCD start
         LCD_CAM.lcd_misc.lcd_bk_en = 1;
         // -- Create a semaphore to block execution until all the controllers are done
-        gdma_channel_alloc_config_t dma_chan_config = {
-            .sibling_chan = NULL,
-            .direction = GDMA_CHANNEL_DIRECTION_TX,
-            .flags = {
-               .reserve_sibling = 0}};
-            // .isr_cache_safe= true}}; // ewowi: Results in Cache disabled but cached memory region accessed
-        gdma_new_channel(&dma_chan_config, &dma_chan);
+        #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+            gdma_channel_alloc_config_t dma_chan_config = {
+                .sibling_chan = NULL,
+                .direction = GDMA_CHANNEL_DIRECTION_TX,
+                .flags = {
+                .reserve_sibling = 0}};
+                // .isr_cache_safe= true}}; // ewowi: Results in Cache disabled but cached memory region accessed
+            gdma_new_ahb_channel(&dma_chan_config, &dma_chan); //note: s3 uses this, P4 uses gdma_new_axi_channel
+        #else
+            gdma_channel_alloc_config_t dma_chan_config = {
+                .sibling_chan = NULL,
+                .direction = GDMA_CHANNEL_DIRECTION_TX,
+                .flags = {
+                .reserve_sibling = 0,
+                .isr_cache_safe= true}};
+            gdma_new_channel(&dma_chan_config, &dma_chan);
+        #endif
         gdma_connect(dma_chan, GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_LCD, 0));
         gdma_strategy_config_t strategy_config = {
             .owner_check = false,
@@ -524,10 +547,15 @@ public:
         gdma_set_transfer_ability(dma_chan, &ability);
     */
         // Enable DMA transfer callback
-        gdma_tx_event_callbacks_t tx_cbs = {
-            .on_trans_eof = _I2SClocklessLedDriverinterruptHandler,
-            .on_descr_err = NULL
-        };
+        #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+            gdma_tx_event_callbacks_t tx_cbs = {
+                .on_trans_eof = _I2SClocklessLedDriverinterruptHandler};
+        #else
+            gdma_tx_event_callbacks_t tx_cbs = {
+                .on_trans_eof = _I2SClocklessLedDriverinterruptHandler,
+                .on_descr_err = NULL // cache memory crash?
+            };
+        #endif
         gdma_register_tx_event_callbacks(dma_chan, &tx_cbs, this);
         // esp_intr_disable((*dma_chan).intr);
         LCD_CAM.lcd_user.lcd_start = 0;
@@ -1683,7 +1711,7 @@ static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg)
 
         if (((I2SClocklessLedDriver *)arg)->transpose)
         {
-            cont->ledToDisplay++;
+            cont->ledToDisplay = cont->ledToDisplay + 1; //++ gives volatile warning
             if (cont->ledToDisplay < cont->num_led_per_strip)
             {
 
@@ -1695,7 +1723,7 @@ static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg)
                 }
                 cont->dmaBufferActive = (cont->dmaBufferActive + 1) % __NB_DMA_BUFFER;
             }
-             cont->ledToDisplay_out++;
+             cont->ledToDisplay_out = cont->ledToDisplay_out + 1; //++ gives volatile warning
         }
         else
         {
