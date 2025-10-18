@@ -224,8 +224,12 @@ clock_speed clock_800KHZ = {6, 4, 1};
 #define _LEDMAPPING
 #endif
 // #define FULL_DMA_BUFFER
+
+//idf 5.5: __NB_DMA_BUFFER is variable to allow changing it at runtime
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 5, 0)
 #ifndef __NB_DMA_BUFFER
 #define __NB_DMA_BUFFER 6
+#endif
 #endif
 
 typedef union
@@ -332,6 +336,11 @@ struct LedTiming
     uint8_t f2;
     uint8_t f3;
 };
+
+//idf 5.5: __NB_DMA_BUFFER is variable to allow changing it at runtime
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+    int __NB_DMA_BUFFER = 6;
+#endif
 
 class I2SClocklessLedDriver
 {
@@ -650,6 +659,17 @@ public:
         putdefaultones((uint16_t *)DMABuffersTampon[0]->buffer);
         putdefaultones((uint16_t *)DMABuffersTampon[1]->buffer);
         */
+
+        //idf 5.5: __NB_DMA_BUFFER is variable to allow changing it at runtime
+        //idf 5.5: DMABuffersTampon dynamically allocated to allow to delete and reallocate with different __NB_DMA_BUFFER value and free memory if needed
+        #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+            // 🌙 use heap_caps so it can be freed and reallocced, S3 can have it in PSRAM, D0-wrover not
+            #ifdef CONFIG_IDF_TARGET_ESP32S3
+                DMABuffersTampon = (I2SClocklessLedDriverDMABuffer **)heap_caps_calloc_prefer(__NB_DMA_BUFFER + 2, sizeof(I2SClocklessLedDriverDMABuffer *), 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_DEFAULT);
+            #elif CONFIG_IDF_TARGET_ESP32 //d0-wrover crashes with memory region error if set in PSRAM
+                DMABuffersTampon = (I2SClocklessLedDriverDMABuffer **)heap_caps_calloc_prefer(__NB_DMA_BUFFER + 2, sizeof(I2SClocklessLedDriverDMABuffer *), 2, MALLOC_CAP_DEFAULT, MALLOC_CAP_DEFAULT);
+            #endif
+        #endif
 
 #if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32
         for (int i = 0; i < __NB_DMA_BUFFER + 1; i++)
@@ -1408,7 +1428,14 @@ public:
     // buffer array for the transposed leds
     I2SClocklessLedDriverDMABuffer **DMABuffersTransposed = NULL;
     // buffer array for the regular way
-    I2SClocklessLedDriverDMABuffer *DMABuffersTampon[__NB_DMA_BUFFER + 2];
+
+    //idf 5.5: __NB_DMA_BUFFER is variable to allow changing it at runtime
+    //idf 5.5: DMABuffersTampon dynamically allocated to allow to delete and reallocate with different __NB_DMA_BUFFER value and free memory if needed
+    #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+        I2SClocklessLedDriverDMABuffer **DMABuffersTampon = NULL;
+    #else
+        I2SClocklessLedDriverDMABuffer *DMABuffersTampon[__NB_DMA_BUFFER + 2];
+    #endif
 
     I2SClocklessLedDriverDMABuffer *allocateDMABuffer(int bytes)
     {
