@@ -1,10 +1,6 @@
-#define SETUP_WIFI 1 
-// flash without WiFi:
-// RAM:   [=         ]   8.1% (used 26468 bytes from 327680 bytes)
-// Flash: [==        ]  23.4% (used 307226 bytes from 1310720 bytes)
-// flash with WiFi: !!!
-// RAM:   [==        ]  15.4% (used 50312 bytes from 327680 bytes)
-// Flash: [======    ]  64.7% (used 847998 bytes from 1310720 bytes)
+#ifdef PLATFORM_VERSION
+
+// #define SETUP_WIFI 1 // choose whether to include WiFi
 
 #include "Arduino.h"
 
@@ -13,9 +9,7 @@
 #include "I2SClocklessLedDriver.h"
 
 #if SETUP_WIFI
-    #include "esp_wifi.h"
-    #include "esp_event.h"
-    #include "nvs_flash.h"
+    #include "WiFiThings.h"
 #endif
 
 //here we have 3 colors per pixel
@@ -34,24 +28,7 @@ void setup() {
     Serial.begin(115200);
 
     #if SETUP_WIFI
-        esp_netif_init();
-        esp_event_loop_create_default();
-        esp_netif_create_default_wifi_ap();
-        
-        wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-        esp_wifi_init(&cfg);
-        
-        wifi_config_t wifi_config = {};
-        strcpy((char*)wifi_config.ap.ssid, "ESP32_AP");
-        strcpy((char*)wifi_config.ap.password, "password123");
-        wifi_config.ap.ssid_len = strlen("ESP32_AP");
-        wifi_config.ap.channel = 1;
-        wifi_config.ap.authmode = WIFI_AUTH_WPA2_PSK;
-        wifi_config.ap.max_connection = 4;
-        
-        esp_wifi_set_mode(WIFI_MODE_AP);
-        esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
-        esp_wifi_start();
+        setupWiFi();
     #endif
 
     driver.initled(leds,pins,NUMSTRIPS,NUM_LEDS_PER_STRIP,ORDER_GRB);
@@ -95,7 +72,13 @@ void loop() {
     driver.showPixels();
 
     time3=ESP.getCycleCount();
+
+    #if SETUP_WIFI
+        loopWiFi(time1, time2, time3);
+    #endif
+
     if (off%100 == 0)
         Serial.printf("Calcul pixel fps:%.2f   showPixels fps:%.2f   Total fps:%.2f \n",(float)240000000/(time2-time1),(float)240000000/(time3-time2),(float)240000000/(time3-time1));
     off++;
 }
+#endif

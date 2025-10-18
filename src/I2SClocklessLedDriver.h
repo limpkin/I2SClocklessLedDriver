@@ -86,7 +86,7 @@ clock_speed clock_1000KHZ = {5, 1, 0};
 clock_speed clock_800KHZ = {6, 4, 1};
 
 #define WS2812_DMA_DESCRIPTOR_BUFFER_MAX_SIZE (576 * 2)
-#else
+#elif CONFIG_IDF_TARGET_ESP32
 #include "esp_heap_caps.h"
 #include "soc/soc.h"
 #include "soc/gpio_sig_map.h"
@@ -200,7 +200,7 @@ clock_speed clock_800KHZ = {6, 4, 1};
 #endif
 
 #ifndef NUM_LEDS_PER_STRIP
-// #pragma message "NUM_LEDS_PER_STRIP not defined, using default 256"
+#pragma message "NUM_LEDS_PER_STRIP not defined, using default 256"
 #define NUM_LEDS_PER_STRIP 256
 #endif
 
@@ -335,7 +335,7 @@ struct LedTiming
 
 class I2SClocklessLedDriver
 {
-#ifndef CONFIG_IDF_TARGET_ESP32S3
+#ifdef CONFIG_IDF_TARGET_ESP32
     struct I2SClocklessLedDriverDMABuffer
     {
         lldesc_t descriptor;
@@ -349,7 +349,7 @@ class I2SClocklessLedDriver
 #endif
 
 public:
-#ifndef CONFIG_IDF_TARGET_ESP32S3
+#ifdef CONFIG_IDF_TARGET_ESP32
     i2s_dev_t *i2s;
 #endif
     uint8_t __green_map[256];
@@ -421,7 +421,7 @@ public:
     I2SClocklessLedDriver() {};
     void setPins(uint8_t *Pins)
     {
-#ifndef CONFIG_IDF_TARGET_ESP32S3
+#ifdef CONFIG_IDF_TARGET_ESP32
         for (int i = 0; i < num_strips; i++)
         {
 
@@ -429,7 +429,7 @@ public:
             gpio_set_direction((gpio_num_t)Pins[i], (gpio_mode_t)GPIO_MODE_DEF_OUTPUT);
             gpio_matrix_out(Pins[i], deviceBaseIndex[I2S_DEVICE] + i + 8, false, false);
         }
-#else
+#elif CONFIG_IDF_TARGET_ESP32S3
         for (int i = 0; i < num_strips; i++)
         {
             esp_rom_gpio_connect_out_signal(Pins[i], signalsID[i], false, false);
@@ -559,7 +559,7 @@ public:
         gdma_register_tx_event_callbacks(dma_chan, &tx_cbs, this);
         // esp_intr_disable((*dma_chan).intr);
         LCD_CAM.lcd_user.lcd_start = 0;
-#else
+#elif CONFIG_IDF_TARGET_ESP32
         int interruptSource;
         if (I2S_DEVICE == 0)
         {
@@ -651,6 +651,7 @@ public:
         putdefaultones((uint16_t *)DMABuffersTampon[1]->buffer);
         */
 
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32
         for (int i = 0; i < __NB_DMA_BUFFER + 1; i++)
         {
             DMABuffersTampon[i] = allocateDMABuffer(nb_components * 8 * 2 * 3);
@@ -661,6 +662,7 @@ public:
         {
             putdefaultones((uint16_t *)DMABuffersTampon[i]->buffer);
         }
+#endif
 
 #ifdef FULL_DMA_BUFFER
         /*
@@ -1114,7 +1116,7 @@ public:
         }
         ledToDisplay = 0;
         transpose = true;
-#ifndef CONFIG_IDF_TARGET_ESP32S3
+#ifdef CONFIG_IDF_TARGET_ESP32
         for (int buff_num = 0; buff_num < __NB_DMA_BUFFER - 1; buff_num++)
         {
 
@@ -1125,7 +1127,7 @@ public:
         DMABuffersTampon[__NB_DMA_BUFFER]->descriptor.qe.stqe_next = &(DMABuffersTampon[0]->descriptor);
         DMABuffersTampon[__NB_DMA_BUFFER + 1]->descriptor.qe.stqe_next = 0;
 
-#else
+#elif CONFIG_IDF_TARGET_ESP32S3
         for (int buff_num = 0; buff_num < __NB_DMA_BUFFER - 1; buff_num++)
         {
 
@@ -1135,6 +1137,8 @@ public:
         DMABuffersTampon[__NB_DMA_BUFFER]->next = DMABuffersTampon[0];
         DMABuffersTampon[__NB_DMA_BUFFER + 1]->next = DMABuffersTampon[__NB_DMA_BUFFER + 1];
 #endif
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32
+
      ledToDisplay = 0;
      dmaBufferActive=0;
         for (int num_buff = 0; num_buff < __NB_DMA_BUFFER - 1; num_buff++)
@@ -1164,6 +1168,7 @@ public:
             isWaiting = false;
             isDisplaying = true;
         }
+#endif
     }
 
     Pixel *strip(int stripNum)
@@ -1399,6 +1404,7 @@ public:
     typedef dma_descriptor_t I2SClocklessLedDriverDMABuffer;
 #endif
 
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32
     // buffer array for the transposed leds
     I2SClocklessLedDriverDMABuffer **DMABuffersTransposed = NULL;
     // buffer array for the regular way
@@ -1426,7 +1432,7 @@ public:
         b->dw0.length = bytes;
         b->dw0.suc_eof = 1;
 
-#else
+#elif CONFIG_IDF_TARGET_ESP32
         b->descriptor.length = bytes;
         b->descriptor.size = bytes;
         b->descriptor.owner = 1;
@@ -1439,10 +1445,10 @@ public:
 #endif
         return b;
     }
-
+#endif
     void i2sReset_DMA()
     {
-#ifndef CONFIG_IDF_TARGET_ESP32S3
+#ifdef CONFIG_IDF_TARGET_ESP32
         (&I2S0)->lc_conf.out_rst = 1;
         (&I2S0)->lc_conf.out_rst = 0;
 #endif
@@ -1450,7 +1456,7 @@ public:
 
     void i2sReset_FIFO()
     {
-#ifndef CONFIG_IDF_TARGET_ESP32S3
+#ifdef CONFIG_IDF_TARGET_ESP32
         (&I2S0)->conf.tx_fifo_reset = 1;
         (&I2S0)->conf.tx_fifo_reset = 0;
 #endif
@@ -1514,7 +1520,7 @@ public:
             buffer[i * 3 + 0] = 0xffff;
             // buffer[i * 6 + 2] = 0xffff;
         }
-#else
+#elif CONFIG_IDF_TARGET_ESP32
         for (int i = 0; i < nb_components * 8 / 2; i++)
         {
             buffer[i * 6 + 1] = 0xffff;
@@ -1523,6 +1529,7 @@ public:
 #endif
     }
 
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32
     void i2sStart(I2SClocklessLedDriverDMABuffer *startBuffer)
     {
 #ifdef CONFIG_IDF_TARGET_ESP32S3
@@ -1538,7 +1545,7 @@ public:
         // esp_intr_enable(dma_chan->intr);
         // vTaskDelay(1);                         // Must 'bake' a moment before...
         LCD_CAM.lcd_user.lcd_start = 1;
-#else
+#elif CONFIG_IDF_TARGET_ESP32
         i2sReset();
         framesync = false;
         counti = 0;
@@ -1569,13 +1576,14 @@ public:
         // Set the mode to indicate that we've started
         isDisplaying = true;
     }
+#endif
 
     void IRAM_ATTR i2sReset()
     {
 #ifdef CONFIG_IDF_TARGET_ESP32S3
         gdma_reset(dma_chan);
         LCD_CAM.lcd_misc.lcd_afifo_reset = 1;
-#else
+#elif CONFIG_IDF_TARGET_ESP32
         const unsigned long lc_conf_reset_flags = I2S_IN_RST_M | I2S_OUT_RST_M | I2S_AHBM_RST_M | I2S_AHBM_FIFO_RST_M;
         (&I2S0)->lc_conf.val |= lc_conf_reset_flags;
         (&I2S0)->lc_conf.val &= ~lc_conf_reset_flags;
@@ -1599,7 +1607,7 @@ static void IRAM_ATTR i2sStop(I2SClocklessLedDriver *cont)
     }
     gdma_stop(dma_chan);
     // esp_intr_disable(dma_chan->intr);
-#else
+#elif CONFIG_IDF_TARGET_ESP32
     esp_intr_disable(cont->_gI2SClocklessDriver_intr_handle);
 
     ets_delay_us(16);
@@ -1689,7 +1697,7 @@ static IRAM_ATTR bool _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle
     }
     return true;
 }
-#else
+#elif CONFIG_IDF_TARGET_ESP32
 static void IRAM_ATTR _I2SClocklessLedDriverinterruptHandler(void *arg)
 {
 #ifdef DO_NOT_USE_INTERUPT
@@ -1819,7 +1827,7 @@ static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B)
     *((uint16_t *)(B + 19)) = (uint16_t)(((y & 0xff00) | ((y1 & 0xff00) << 8)) >> 8);
     *((uint16_t *)(B + 22)) = (uint16_t)((y & 0xff) | ((y1 & 0xff) << 8));
 
-#else
+#elif CONFIG_IDF_TARGET_ESP32
 
     *((uint16_t *)(B)) = (uint16_t)(((x & 0xff000000) >> 8 | ((x1 & 0xff000000))) >> 16);
     *((uint16_t *)(B + 5)) = (uint16_t)(((x & 0xff0000) >> 16 | ((x1 & 0xff0000) >> 8)));
@@ -1839,10 +1847,12 @@ static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver *driver) // uint8_t
     int nbcomponents = driver->nb_components;
     Lines secondPixel[nbcomponents];
     uint16_t *buffer;
+#if CONFIG_IDF_TARGET_ESP32S3 || CONFIG_IDF_TARGET_ESP32
     if (driver->transpose)
         buffer = (uint16_t *)driver->DMABuffersTampon[driver->dmaBufferActive]->buffer;
     else
         buffer = (uint16_t *)driver->DMABuffersTransposed[driver->dmaBufferActive]->buffer;
+#endif
 
    // uint16_t led_tmp = driver->ledToDisplay;
 #ifdef __HARDWARE_MAP
