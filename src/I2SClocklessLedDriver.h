@@ -9,15 +9,6 @@
 
 #pragma once
 
-// October 2025: idf 5.5.0 check will be used to track recent changes which work in 5.5.0, maybe / probably also before but this ensures we do not break things on older versions
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-    #include <esp_private/periph_ctrl.h>
-    #include <esp_private/gpio.h>
-#else
-    #include <driver/periph_ctrl.h>
-    #include "driver/gpio.h"
-#endif
-
 #ifdef CONFIG_IDF_TARGET_ESP32S3
 
 #define GDMA_OUT_INT_CLR_REG(i) (DR_REG_GDMA_BASE + 0x74 + (192 * i))
@@ -29,6 +20,7 @@
 #include "rom/cache.h"
 // void gdma_default_tx_isr(void *args);
 #include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h" // #error "include FreeRTOS.h" must appear in source files before "include semphr.h"
 #include "freertos/semphr.h"
 #include <stdio.h>
 
@@ -41,7 +33,6 @@
 #include <hal/gpio_hal.h>
 #include <soc/lcd_cam_struct.h>
 #include <stdbool.h>
-#include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 // #include "hal/gpio_ll.h"
 #include "esp_rom_gpio.h"
@@ -80,10 +71,11 @@ typedef struct
     int div_b;
 } clock_speed;
 
-clock_speed clock_1123KHZ = {4, 20, 9}; //{4, 20, 9};
-clock_speed clock_1111KHZ = {4, 2, 1};
-clock_speed clock_1000KHZ = {5, 1, 0};
-clock_speed clock_800KHZ = {6, 4, 1};
+//defined in .cpp (not needed for physical driver ...)
+extern clock_speed clock_1123KHZ;
+extern clock_speed clock_1111KHZ;
+extern clock_speed clock_1000KHZ;
+extern clock_speed clock_800KHZ;
 
 #define WS2812_DMA_DESCRIPTOR_BUFFER_MAX_SIZE (576 * 2)
 #elif CONFIG_IDF_TARGET_ESP32
@@ -112,6 +104,27 @@ clock_speed clock_800KHZ = {6, 4, 1};
 #include "math.h"
 
 #include "helper.h"
+
+// October 2025: idf 5.5.0 check will be used to track recent changes which work in 5.5.0, maybe / probably also before but this ensures we do not break things on older versions
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+    //so output ... is supported (see below)
+    #include <esp_private/periph_ctrl.h>
+    #include <esp_private/gpio.h>
+
+    //NUM_LEDS_PER_STRIP not needed for physical driver as we set the __delay dynamically (Virtual driver check if it can be a variable)
+    //plus NUM_LEDS_PER_STRIP can not always be set before .h is loaded (it is loaded when .cpp is loaded)
+#else
+    #include <driver/periph_ctrl.h>
+    #include "driver/gpio.h"
+
+    #ifndef NUM_LEDS_PER_STRIP
+        #pragma message "NUM_LEDS_PER_STRIP not defined, using default 256"
+        #define NUM_LEDS_PER_STRIP 256
+    #endif
+
+    #define __delay (((NUM_LEDS_PER_STRIP * 125 * 8 * _nb_components) / 100000) + 1)
+
+#endif
 
 #ifndef NUMSTRIPS
 #define NUMSTRIPS 16
@@ -198,13 +211,6 @@ clock_speed clock_800KHZ = {6, 4, 1};
 #endif
 #endif
 #endif
-
-#ifndef NUM_LEDS_PER_STRIP
-#pragma message "NUM_LEDS_PER_STRIP not defined, using default 256"
-#define NUM_LEDS_PER_STRIP 256
-#endif
-
-#define __delay (((NUM_LEDS_PER_STRIP * 125 * 8 * _nb_components) / 100000) + 1)
 
 #ifdef USE_PIXELSLIB
 #include "pixelslib.h"
@@ -337,9 +343,9 @@ struct LedTiming
     uint8_t f3;
 };
 
-//idf 5.5: __NB_DMA_BUFFER is variable to allow changing it at runtime
+//idf 5.5: __NB_DMA_BUFFER is variable to allow changing it at runtime (defined in .cpp)
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-    int __NB_DMA_BUFFER = 6;
+    extern uint8_t __NB_DMA_BUFFER;
 #endif
 
 class I2SClocklessLedDriver
@@ -395,6 +401,9 @@ public:
     int nb_components;
     int stripSize[16];
     uint16_t (*mapLed)(uint16_t led);
+    #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+        TickType_t __delay = 0;
+    #endif
 #ifdef __HARDWARE_MAP
     uint16_t *_hmap;
     volatile uint16_t *_hmapoff;
@@ -1351,6 +1360,13 @@ public:
 #endif
     }
 
+    #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+        //call setShowDelay if num_led_per_strip is changed after initled
+        void setShowDelay(int num_led_per_strip) {
+            __delay = (((num_led_per_strip * 125 * 8 * nb_components) / 100000) + 1);
+        }
+    #endif
+
     void __initled(uint8_t *leds, uint8_t *Pinsq, int num_strips, int num_led_per_strip)
     {
         _gammab = 1;
@@ -1369,6 +1385,10 @@ public:
         linewidth = num_led_per_strip;
         this->num_strips = num_strips;
         this->dmaBufferCount = dmaBufferCount;
+
+        #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+            setShowDelay(num_led_per_strip);
+        #endif
 
         ESP_LOGV(TAG, "xdelay:%d", __delay);
 #if HARDWARESPRITES == 1
