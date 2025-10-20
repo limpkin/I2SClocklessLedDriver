@@ -132,9 +132,9 @@ uint8_t leds[4*NUM_LEDS];
 
  I2SClocklessLedDriver driver;
  
- uint8_t leds[3*NUM_STRIPS*NUM_LEDS_PER_STRIP]; //equivalent of CRGB leds[NUM_LEDS_PER_STRIPS*NUM_LEDS_PER_STRIPS]
- int pins[NUM_STRIPS] ={0,2,4,5,12,13,14,15,16,29,25,26};
- driver.initled((uint8_t*)leds,pins,NUM_STRIPS,NUM_LED_PER_STRIP,ORDER_GRB);
+ uint8_t leds[3*NUMSTRIPS*NUM_LEDS_PER_STRIP]; //equivalent of CRGB leds[NUM_LEDS_PER_STRIPS*NUM_LEDS_PER_STRIPS]
+ int pins[NUMSTRIPS] ={0,2,4,5,12,13,14,15,16,29,25,26};
+ driver.initled((uint8_t*)leds,pins,NUMSTRIPS,NUM_LED_PER_STRIP,ORDER_GRB);
  ```
  
  example 5: declaring 12 strips of 256 leds in RGBW

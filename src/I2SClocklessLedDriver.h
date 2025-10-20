@@ -1,6 +1,18 @@
+/**
+    @title     I2SClocklessLedDriver
+    @file      I2SClocklessLedDriver.h
+    @repo      https://github.com/hpwit/I2SClocklessLedDriver
+    @Copyright © 2025 Yves Bazin
+    @license   MIT License
+    @license   For non MIT usage, commercial licenses must be purchased. Contact us for more information.
+**/
+
 /* library options
+ *  IDF5.5 check will be used to track recent changes which work in IDF 5.5, maybe / probably also before but this ensures we do not break things on older versions
+ *  <IDF5.5: NUMSTRIPS add this before the #include of the library this will help with the speed of the buffer calculation
+ *  >=IDF5.5: NUM_STRIPS is a global variable (note the _ !), set in initled and update if number of strips change
+ * 
  *  ENABLE_HARDWARE_SCROLL : to enable the HARDWARE SCROLL. Attention wjhen enabled you can use the offset  but it could mean slow when using all the pins
- *  NUMSTRIPS add this before the #include of the library this will help with the speed of the buffer calculation
  *  USE_PIXELSLIB : to use tthe pixel lib library automatic functions
  */
 
@@ -9,110 +21,19 @@
 
 #pragma once
 
-#ifdef CONFIG_IDF_TARGET_ESP32S3
-
-#define GDMA_OUT_INT_CLR_REG(i) (DR_REG_GDMA_BASE + 0x74 + (192 * i))
-#define GDMA_OUT_INT_ENA_REG(i) (DR_REG_GDMA_BASE + 0x70 + (192 * i))
-#define GDMA_OUT_INT_ST_REG(i) (DR_REG_GDMA_BASE + 0x6c + (192 * i))
-#include "esp_err.h"
-#include "esp_log.h"
-#include "esp_check.h"
-#include "rom/cache.h"
-// void gdma_default_tx_isr(void *args);
-#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h" // #error "include FreeRTOS.h" must appear in source files before "include semphr.h"
-#include "freertos/semphr.h"
-#include <stdio.h>
 
-// #include "esp32-hal-log.h"//
-#include <soc/gdma_channel.h>
-
-#include <hal/gdma_types.h>
-#include <esp_private/gdma.h>
-#include <hal/dma_types.h>
-#include <hal/gpio_hal.h>
-#include <soc/lcd_cam_struct.h>
-#include <stdbool.h>
-#include "freertos/task.h"
-// #include "hal/gpio_ll.h"
-#include "esp_rom_gpio.h"
-#include "esp_log.h"
-#include <hal/gdma_hal.h>
-#include "hal/gdma_ll.h"
-#include "soc/periph_defs.h"
-#include "soc/soc_caps.h"
-#include "soc/gdma_periph.h"
-// #endif
-#ifdef OVER_CLOCK_MAX
-#define CLOCK_DIV_NUM 4
-#define CLOCK_DIV_A 20
-#define CLOCK_DIV_B 9
-#endif
-#ifdef OVERCLOCK_1MHZ
-#define CLOCK_DIV_NUM 5
-#define CLOCK_DIV_A 1
-#define CLOCK_DIV_B 0
-#endif
-#ifdef OVERCLOCK_1_1MHZ
-#define CLOCK_DIV_NUM 4
-#define CLOCK_DIV_A 8
-#define CLOCK_DIV_B 4
-#endif
-#ifndef CLOCK_DIV_NUM
-#define CLOCK_DIV_NUM 6
-#define CLOCK_DIV_A 4
-#define CLOCK_DIV_B 1
-#endif
-
-typedef struct
-{
-    int div_num;
-    int div_a;
-    int div_b;
-} clock_speed;
-
-//defined in .cpp (not needed for physical driver ...)
-extern clock_speed clock_1123KHZ;
-extern clock_speed clock_1111KHZ;
-extern clock_speed clock_1000KHZ;
-extern clock_speed clock_800KHZ;
-
-#define WS2812_DMA_DESCRIPTOR_BUFFER_MAX_SIZE (576 * 2)
-#elif CONFIG_IDF_TARGET_ESP32
-#include "esp_heap_caps.h"
-#include "soc/soc.h"
-#include "soc/gpio_sig_map.h"
-#include "soc/i2s_reg.h"
-#include "soc/i2s_struct.h"
-#include "soc/io_mux_reg.h"
-#include "rom/lldesc.h"
-#include <cstring>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/semphr.h"
-#include <stdio.h>
-#include <rom/ets_sys.h>
-// #include "esp32-hal-log.h"
-#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
-#include "hal/gpio_ll.h"
-#include "soc/gpio_struct.h"
-#include "rom/gpio.h"
-#endif
-
-#endif
-#include "esp_log.h"
-#include "math.h"
-
-#include "helper.h"
-
-// October 2025: idf 5.5.0 check will be used to track recent changes which work in 5.5.0, maybe / probably also before but this ensures we do not break things on older versions
+// IDF5.5: replace #include driver by #include esp_private
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-    //so output ... is supported (see below)
+    //esp_private needed for gpio_iomux_out (see below)
     #include <esp_private/periph_ctrl.h>
     #include <esp_private/gpio.h>
 
     //NUM_LEDS_PER_STRIP not needed for physical driver as we set the __delay dynamically (Virtual driver check if it can be a variable)
     //plus NUM_LEDS_PER_STRIP can not always be set before .h is loaded (it is loaded when .cpp is loaded)
+    //same for NUMSTRIPS, set as global variable (as needed by global function transpose16x1_noinline2)
+    //setGlobalNumStrips sets NUM_STRIPS dynamically
+    //setShowDelay sets (__delay) dynamically
 #else
     #include <driver/periph_ctrl.h>
     #include "driver/gpio.h"
@@ -122,13 +43,110 @@ extern clock_speed clock_800KHZ;
         #define NUM_LEDS_PER_STRIP 256
     #endif
 
-    #define __delay (((NUM_LEDS_PER_STRIP * 125 * 8 * _nb_components) / 100000) + 1)
+    #define __delay (((NUM_LEDS_PER_STRIP * 125 * 8 * _nb_components) / 100000) + 1) //used in waitDisplay
+
+    #ifndef NUMSTRIPS
+        #define NUMSTRIPS 16
+    #endif
 
 #endif
 
-#ifndef NUMSTRIPS
-#define NUMSTRIPS 16
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+
+    #define GDMA_OUT_INT_CLR_REG(i) (DR_REG_GDMA_BASE + 0x74 + (192 * i))
+    #define GDMA_OUT_INT_ENA_REG(i) (DR_REG_GDMA_BASE + 0x70 + (192 * i))
+    #define GDMA_OUT_INT_ST_REG(i) (DR_REG_GDMA_BASE + 0x6c + (192 * i))
+    #include "esp_err.h"
+    #include "esp_log.h"
+    #include "esp_check.h"
+    #include "rom/cache.h"
+    // void gdma_default_tx_isr(void *args);
+    #include "esp_heap_caps.h"
+    #include "freertos/semphr.h"
+    #include <stdio.h>
+
+    // #include "esp32-hal-log.h"//
+    #include <soc/gdma_channel.h>
+
+    #include <hal/gdma_types.h>
+    #include <esp_private/gdma.h>
+    #include <hal/dma_types.h>
+    #include <hal/gpio_hal.h>
+    #include <soc/lcd_cam_struct.h>
+    #include <stdbool.h>
+    #include "freertos/task.h"
+    // #include "hal/gpio_ll.h"
+    #include "esp_rom_gpio.h"
+    #include "esp_log.h"
+    #include <hal/gdma_hal.h>
+    #include "hal/gdma_ll.h"
+    #include "soc/periph_defs.h"
+    #include "soc/soc_caps.h"
+    #include "soc/gdma_periph.h"
+    // #endif
+    #ifdef OVER_CLOCK_MAX
+    #define CLOCK_DIV_NUM 4
+    #define CLOCK_DIV_A 20
+    #define CLOCK_DIV_B 9
+    #endif
+    #ifdef OVERCLOCK_1MHZ
+    #define CLOCK_DIV_NUM 5
+    #define CLOCK_DIV_A 1
+    #define CLOCK_DIV_B 0
+    #endif
+    #ifdef OVERCLOCK_1_1MHZ
+    #define CLOCK_DIV_NUM 4
+    #define CLOCK_DIV_A 8
+    #define CLOCK_DIV_B 4
+    #endif
+    #ifndef CLOCK_DIV_NUM
+    #define CLOCK_DIV_NUM 6
+    #define CLOCK_DIV_A 4
+    #define CLOCK_DIV_B 1
+    #endif
+
+    typedef struct
+    {
+        int div_num;
+        int div_a;
+        int div_b;
+    } clock_speed;
+
+    //defined in .cpp (not needed for physical driver ...)
+    extern clock_speed clock_1123KHZ;
+    extern clock_speed clock_1111KHZ;
+    extern clock_speed clock_1000KHZ;
+    extern clock_speed clock_800KHZ;
+
+    #define WS2812_DMA_DESCRIPTOR_BUFFER_MAX_SIZE (576 * 2)
+
+#elif CONFIG_IDF_TARGET_ESP32
+    #include "esp_heap_caps.h"
+    #include "soc/soc.h"
+    #include "soc/gpio_sig_map.h"
+    #include "soc/i2s_reg.h"
+    #include "soc/i2s_struct.h"
+    #include "soc/io_mux_reg.h"
+    #include "rom/lldesc.h"
+    #include <cstring>
+    #include "freertos/task.h"
+    #include "freertos/semphr.h"
+    #include <stdio.h>
+    #include <rom/ets_sys.h>
+    // #include "esp32-hal-log.h"
+
+    #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+        #include "hal/gpio_ll.h"
+        #include "soc/gpio_struct.h"
+        #include "rom/gpio.h"
+    #endif
+
 #endif
+
+#include "esp_log.h"
+#include "math.h"
+
+#include "helper.h"
 
 #ifndef SNAKEPATTERN
 #define SNAKEPATTERN 1
@@ -157,85 +175,72 @@ extern clock_speed clock_800KHZ;
 #include "hardwareSprite.h"
 #endif
 
-#ifdef COLOR_ORDER_GRBW
-#define _p_r 1
-#define _p_g 0
-#define _p_b 2
-#define _nb_components 4
+#if defined(COLOR_ORDER_GRBW)
+    #define _p_r 1
+    #define _p_g 0
+    #define _p_b 2
+    #define _nb_components 4
+#elif defined(COLOR_ORDER_RGB)
+    #define _p_r 0
+    #define _p_g 1
+    #define _p_b 2
+    #define _nb_components 3
+#elif defined(COLOR_ORDER_RBG)
+    #define _p_r 0
+    #define _p_g 2
+    #define _p_b 1
+    #define _nb_components 3
+#elif defined(COLOR_ORDER_GBR)
+    #define _p_r 2
+    #define _p_g 0
+    #define _p_b 1
+    #define _nb_components 3
+#elif defined(COLOR_ORDER_BGR)
+    #define _p_r 2
+    #define _p_g 1
+    #define _p_b 0
+    #define _nb_components 3
+#elif defined(COLOR_ORDER_BRG)
+    #define _p_r 1
+    #define _p_g 2
+    #define _p_b 0
+    #define _nb_components 3
+#elif defined(COLOR_ORDER_GRB)
+    #define _p_r 1
+    #define _p_g 0
+    #define _p_b 2
+    #define _nb_components 3
 #else
-#ifdef COLOR_ORDER_RGB
-#define _p_r 0
-#define _p_g 1
-#define _p_b 2
-#define _nb_components 3
-#else
-#ifdef COLOR_ORDER_RBG
-#define _p_r 0
-#define _p_g 2
-#define _p_b 1
-#define _nb_components 3
-#else
-#ifdef COLOR_ORDER_GBR
-#define _p_r 2
-#define _p_g 0
-#define _p_b 1
-#define _nb_components 3
-#else
-#ifdef COLOR_ORDER_BGR
-#define _p_r 2
-#define _p_g 1
-#define _p_b 0
-#define _nb_components 3
-#else
-#ifdef COLOR_ORDER_BRG
-#define _p_r 1
-#define _p_g 2
-#define _p_b 0
-#define _nb_components 3
-#else
-#ifdef COLOR_ORDER_GRB
-#define _p_r 1
-#define _p_g 0
-#define _p_b 2
-#define _nb_components 3
-#else
-
-#define _p_r 1
-#define _p_g 0
-#define _p_b 2
-#define _nb_components 3
-#endif
-#endif
-#endif
-#endif
-#endif
-#endif
+    #define _p_r 1
+    #define _p_g 0
+    #define _p_b 2
+    #define _nb_components 3
 #endif
 
 #ifdef USE_PIXELSLIB
-#include "pixelslib.h"
+    #include "pixelslib.h"
 #else
-#include "___pixeltypes.h"
+    #include "___pixeltypes.h"
 #endif
 
 #include "framebuffer.h"
 
 #ifdef __HARDWARE_MAP
-#define _LEDMAPPING
+    #define _LEDMAPPING
 #endif
 #ifdef __SOFTWARE_MAP
-#define _LEDMAPPING
+    #define _LEDMAPPING
 #endif
 #ifdef __HARDWARE_MAP_PROGMEM
-#define _LEDMAPPING
+    #define _LEDMAPPING
 #endif
 // #define FULL_DMA_BUFFER
 
-//idf 5.5: __NB_DMA_BUFFER is variable to allow changing it at runtime
+// IDF5.5: __NB_DMA_BUFFER is #define to allow changing it at runtime
 #if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(5, 5, 0)
-#ifndef __NB_DMA_BUFFER
-#define __NB_DMA_BUFFER 6
-#endif
+    #ifndef __NB_DMA_BUFFER
+        #define __NB_DMA_BUFFER 6
+    #endif
 #endif
 
 typedef union
@@ -246,29 +251,30 @@ typedef union
 } Lines;
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
-static uint8_t signalsID[16] = {
-    LCD_DATA_OUT0_IDX,
-    LCD_DATA_OUT1_IDX,
-    LCD_DATA_OUT2_IDX,
-    LCD_DATA_OUT3_IDX,
-    LCD_DATA_OUT4_IDX,
-    LCD_DATA_OUT5_IDX,
-    LCD_DATA_OUT6_IDX,
-    LCD_DATA_OUT7_IDX,
-    LCD_DATA_OUT8_IDX,
-    LCD_DATA_OUT9_IDX,
-    LCD_DATA_OUT10_IDX,
-    LCD_DATA_OUT11_IDX,
-    LCD_DATA_OUT12_IDX,
-    LCD_DATA_OUT13_IDX,
-    LCD_DATA_OUT14_IDX,
-    LCD_DATA_OUT15_IDX,
+    static uint8_t signalsID[16] = {
+        LCD_DATA_OUT0_IDX,
+        LCD_DATA_OUT1_IDX,
+        LCD_DATA_OUT2_IDX,
+        LCD_DATA_OUT3_IDX,
+        LCD_DATA_OUT4_IDX,
+        LCD_DATA_OUT5_IDX,
+        LCD_DATA_OUT6_IDX,
+        LCD_DATA_OUT7_IDX,
+        LCD_DATA_OUT8_IDX,
+        LCD_DATA_OUT9_IDX,
+        LCD_DATA_OUT10_IDX,
+        LCD_DATA_OUT11_IDX,
+        LCD_DATA_OUT12_IDX,
+        LCD_DATA_OUT13_IDX,
+        LCD_DATA_OUT14_IDX,
+        LCD_DATA_OUT15_IDX,
 
-};
-static gdma_channel_handle_t dma_chan;
-
+    };
+    static gdma_channel_handle_t dma_chan;
 #endif
+
 class I2SClocklessLedDriver;
+
 struct OffsetDisplay
 {
     int offsetx;
@@ -276,23 +282,27 @@ struct OffsetDisplay
     int panel_height;
     int panel_width;
 };
+
 //static const char *TAG = "I2SClocklessLedDriver";
 #undef TAG
 #define TAG "I2SCLD"
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
-static bool _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data);
+    static bool _I2SClocklessLedDriverinterruptHandler(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data);
 #else
-static void _I2SClocklessLedDriverinterruptHandler(void *arg);
+    static void _I2SClocklessLedDriverinterruptHandler(void *arg);
 #endif
+
 static void transpose16x1_noinline2(unsigned char *A, uint16_t *B);
+
 /*
 #ifdef ENABLE_HARDWARE_SCROLL
-static void loadAndTranspose(uint8_t *ledt, int led_per_strip, int num_stripst, OffsetDisplay offdisp, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
+    static void loadAndTranspose(uint8_t *ledt, int led_per_strip, int num_stripst, OffsetDisplay offdisp, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
 #else
-static void loadAndTranspose(uint8_t *ledt, int *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
+    static void loadAndTranspose(uint8_t *ledt, int *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
 #endif
 */
+
 static void loadAndTranspose(I2SClocklessLedDriver *driver);
 
 enum colorarrangment
@@ -331,7 +341,6 @@ int MOD(int a, int b)
 
 struct LedTiming
 {
-
     // led timing
     uint32_t T0;
     uint32_t T1;
@@ -343,9 +352,10 @@ struct LedTiming
     uint8_t f3;
 };
 
-//idf 5.5: __NB_DMA_BUFFER is variable to allow changing it at runtime (defined in .cpp)
+// IDF5.5: __NB_DMA_BUFFER is variable to allow changing it at runtime (defined in .cpp)
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
     extern uint8_t __NB_DMA_BUFFER;
+    extern uint8_t NUM_STRIPS;
 #endif
 
 class I2SClocklessLedDriver
@@ -401,9 +411,12 @@ public:
     int nb_components;
     int stripSize[16];
     uint16_t (*mapLed)(uint16_t led);
+
+    // IDF5.5: driver class: __delay is variable to allow changing it at runtime
     #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
         TickType_t __delay = 0;
     #endif
+
 #ifdef __HARDWARE_MAP
     uint16_t *_hmap;
     volatile uint16_t *_hmapoff;
@@ -412,6 +425,7 @@ public:
         _hmap = map;
     }
 #endif
+
 #ifdef __HARDWARE_MAP_PROGMEM
     const uint16_t *_hmap;
     volatile uint16_t _hmapoff;
@@ -421,6 +435,7 @@ public:
         _hmap = map;
     }
 #endif
+
     void setMapLed(uint16_t (*newMapLed)(uint16_t led))
     {
         mapLed = newMapLed;
@@ -437,12 +452,12 @@ public:
     volatile int counti;
 
     I2SClocklessLedDriver() {};
+
     void setPins(uint8_t *Pins)
     {
 #ifdef CONFIG_IDF_TARGET_ESP32
         for (int i = 0; i < num_strips; i++)
         {
-
             PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[Pins[i]], PIN_FUNC_GPIO);
             gpio_set_direction((gpio_num_t)Pins[i], (gpio_mode_t)GPIO_MODE_DEF_OUTPUT);
             gpio_matrix_out(Pins[i], deviceBaseIndex[I2S_DEVICE] + i + 8, false, false);
@@ -454,8 +469,9 @@ public:
            // gpio_hal_iomux_func_sel(GPIO_PIN_MUX_REG[Pins[i]], PIN_FUNC_GPIO);
            // gpio_hal_func_sel(GPIO_PIN_MUX_REG[Pins[i]], PIN_FUNC_GPIO);
 
+            // IDF5.5: setPins: use gpio_iomux_output instead of gpio_iomux_out suppress warning, ready for idf 6, see https://github.com/espressif/esp-idf/issues/17052
             #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-                gpio_iomux_output((gpio_num_t)Pins[i], PIN_FUNC_GPIO); //suppress warning, ready for idf 6, see https://github.com/espressif/esp-idf/issues/17052
+                gpio_iomux_output((gpio_num_t)Pins[i], PIN_FUNC_GPIO);
             #else
                 gpio_iomux_out(Pins[i], PIN_FUNC_GPIO, false);
             #endif
@@ -535,13 +551,15 @@ public:
         LCD_CAM.lcd_user.lcd_cmd = 0;            // No command at LCD start
         LCD_CAM.lcd_misc.lcd_bk_en = 1;
         // -- Create a semaphore to block execution until all the controllers are done
+
+        // IDF5.5: i2sInit: .isr_cache_safe=true results in Cache disabled but cached memory region accessed crash
         #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
             gdma_channel_alloc_config_t dma_chan_config = {
                 .sibling_chan = NULL,
                 .direction = GDMA_CHANNEL_DIRECTION_TX,
                 .flags = {
                 .reserve_sibling = 0}};
-                // .isr_cache_safe= true}}; // ewowi: Results in Cache disabled but cached memory region accessed
+                // .isr_cache_safe= true}};
             gdma_new_ahb_channel(&dma_chan_config, &dma_chan); //note: s3 uses this, P4 uses gdma_new_axi_channel
         #else
             gdma_channel_alloc_config_t dma_chan_config = {
@@ -565,15 +583,10 @@ public:
         gdma_set_transfer_ability(dma_chan, &ability);
     */
         // Enable DMA transfer callback
-        #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-            gdma_tx_event_callbacks_t tx_cbs = {
-                .on_trans_eof = _I2SClocklessLedDriverinterruptHandler};
-        #else
-            gdma_tx_event_callbacks_t tx_cbs = {
-                .on_trans_eof = _I2SClocklessLedDriverinterruptHandler,
-                .on_descr_err = NULL // cache memory crash?
-            };
-        #endif
+        gdma_tx_event_callbacks_t tx_cbs = {
+            .on_trans_eof = _I2SClocklessLedDriverinterruptHandler,
+            .on_descr_err = NULL
+        };
         gdma_register_tx_event_callbacks(dma_chan, &tx_cbs, this);
         // esp_intr_disable((*dma_chan).intr);
         LCD_CAM.lcd_user.lcd_start = 0;
@@ -669,10 +682,8 @@ public:
         putdefaultones((uint16_t *)DMABuffersTampon[1]->buffer);
         */
 
-        //idf 5.5: __NB_DMA_BUFFER is variable to allow changing it at runtime
-        //idf 5.5: DMABuffersTampon dynamically allocated to allow to delete and reallocate with different __NB_DMA_BUFFER value and free memory if needed
+        // IDF5.5: initDMABuffers: use heap_caps so it can be freed and reallocated, S3 can have it in PSRAM, D0-wrover not!
         #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-            // 🌙 use heap_caps so it can be freed and reallocced, S3 can have it in PSRAM, D0-wrover not
             #ifdef CONFIG_IDF_TARGET_ESP32S3
                 DMABuffersTampon = (I2SClocklessLedDriverDMABuffer **)heap_caps_calloc_prefer(__NB_DMA_BUFFER + 2, sizeof(I2SClocklessLedDriverDMABuffer *), 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_DEFAULT);
             #elif CONFIG_IDF_TARGET_ESP32 //d0-wrover crashes with memory region error if set in PSRAM
@@ -1159,7 +1170,6 @@ public:
 #elif CONFIG_IDF_TARGET_ESP32S3
         for (int buff_num = 0; buff_num < __NB_DMA_BUFFER - 1; buff_num++)
         {
-
             DMABuffersTampon[buff_num]->next = DMABuffersTampon[buff_num + 1];
         }
         DMABuffersTampon[__NB_DMA_BUFFER - 1]->next = DMABuffersTampon[0];
@@ -1360,9 +1370,12 @@ public:
 #endif
     }
 
+    // IDF5.5: call setGlobalNumStrips and setShowDelay if num_strips resp. num_led_per_strip is changed after initled
     #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-        //call setShowDelay if num_led_per_strip is changed after initled
-        void setShowDelay(int num_led_per_strip) {
+        void setGlobalNumStrips() {
+            NUM_STRIPS = num_strips;
+        }
+        void setShowDelay() {
             __delay = (((num_led_per_strip * 125 * 8 * nb_components) / 100000) + 1);
         }
     #endif
@@ -1386,8 +1399,10 @@ public:
         this->num_strips = num_strips;
         this->dmaBufferCount = dmaBufferCount;
 
+        // IDF5.5: initled: call setGlobalNumStrips and setShowDelay
         #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-            setShowDelay(num_led_per_strip);
+            setGlobalNumStrips();
+            setShowDelay();
         #endif
 
         ESP_LOGV(TAG, "xdelay:%d", __delay);
@@ -1434,7 +1449,14 @@ public:
         _defaultOffsetDisplay = _offsetDisplay;
         linewidth = num_led_per_strip;
         this->num_strips = num_strips;
-        this->dmaBufferCount = dmaBufferCount;*/
+        this->dmaBufferCount = dmaBufferCount;
+
+        // IDF5.5: initled: call setGlobalNumStrips and setShowDelay
+        #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+            setGlobalNumStrips();
+            setShowDelay();
+        #endif
+        */
 
         setPins(Pinsq);
         i2sInit();
@@ -1449,8 +1471,7 @@ public:
     I2SClocklessLedDriverDMABuffer **DMABuffersTransposed = NULL;
     // buffer array for the regular way
 
-    //idf 5.5: __NB_DMA_BUFFER is variable to allow changing it at runtime
-    //idf 5.5: DMABuffersTampon dynamically allocated to allow to delete and reallocate with different __NB_DMA_BUFFER value and free memory if needed
+    // IDF5.5: initled: DMABuffersTampon dynamically allocated to allow to delete and reallocate with different __NB_DMA_BUFFER value and free memory if needed
     #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
         I2SClocklessLedDriverDMABuffer **DMABuffersTampon = NULL;
     #else
@@ -1814,47 +1835,95 @@ static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B)
     uint32_t x, y, x1, y1, t;
 
     y = *(unsigned int *)(A);
-#if NUMSTRIPS > 4
-    x = *(unsigned int *)(A + 4);
-#else
-    x = 0;
-#endif
 
-#if NUMSTRIPS > 8
-    y1 = *(unsigned int *)(A + 8);
-#else
-    y1 = 0;
-#endif
-#if NUMSTRIPS > 12
-    x1 = *(unsigned int *)(A + 12);
-#else
-    x1 = 0;
-#endif
+    // IDF5.5: transpose16x1_noinline2: use NUM_STRIPS global variable, else #define NUMSTRIPS
+    #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+        //use NUM_STRIPS global variable
 
-    // pre-transform x
-#if NUMSTRIPS > 4
-    t = (x ^ (x >> 7)) & AAA;
-    x = x ^ t ^ (t << 7);
-    t = (x ^ (x >> 14)) & CC;
-    x = x ^ t ^ (t << 14);
-#endif
-#if NUMSTRIPS > 12
-    t = (x1 ^ (x1 >> 7)) & AAA;
-    x1 = x1 ^ t ^ (t << 7);
-    t = (x1 ^ (x1 >> 14)) & CC;
-    x1 = x1 ^ t ^ (t << 14);
-#endif
-    // pre-transform y
-    t = (y ^ (y >> 7)) & AAA;
-    y = y ^ t ^ (t << 7);
-    t = (y ^ (y >> 14)) & CC;
-    y = y ^ t ^ (t << 14);
-#if NUMSTRIPS > 8
-    t = (y1 ^ (y1 >> 7)) & AAA;
-    y1 = y1 ^ t ^ (t << 7);
-    t = (y1 ^ (y1 >> 14)) & CC;
-    y1 = y1 ^ t ^ (t << 14);
-#endif
+        if (NUM_STRIPS > 4) {
+            x = *(unsigned int *)(A + 4);
+
+            // pre-transform x
+            t = (x ^ (x >> 7)) & AAA;
+            x = x ^ t ^ (t << 7);
+            t = (x ^ (x >> 14)) & CC;
+            x = x ^ t ^ (t << 14);
+        } else
+            x = 0;
+
+        if (NUM_STRIPS > 8)
+            y1 = *(unsigned int *)(A + 8);
+        else
+            y1 = 0;
+
+        if (NUM_STRIPS > 12) {
+            // pre-transform x
+            x1 = *(unsigned int *)(A + 12);
+            t = (x1 ^ (x1 >> 7)) & AAA;
+            x1 = x1 ^ t ^ (t << 7);
+            t = (x1 ^ (x1 >> 14)) & CC;
+            x1 = x1 ^ t ^ (t << 14);
+        } else
+            x1 = 0;
+
+        // pre-transform y
+        t = (y ^ (y >> 7)) & AAA;
+        y = y ^ t ^ (t << 7);
+        t = (y ^ (y >> 14)) & CC;
+        y = y ^ t ^ (t << 14);
+
+        if (NUM_STRIPS > 8) {
+            t = (y1 ^ (y1 >> 7)) & AAA;
+            y1 = y1 ^ t ^ (t << 7);
+            t = (y1 ^ (y1 >> 14)) & CC;
+            y1 = y1 ^ t ^ (t << 14);
+        }
+    #else
+        //use #define NUMSTRIPS
+
+        #if NUMSTRIPS > 4
+            x = *(unsigned int *)(A + 4);
+        #else
+            x = 0;
+        #endif
+
+        #if NUMSTRIPS > 8
+            y1 = *(unsigned int *)(A + 8);
+        #else
+            y1 = 0;
+        #endif
+        #if NUMSTRIPS > 12
+            x1 = *(unsigned int *)(A + 12);
+        #else
+            x1 = 0;
+        #endif
+
+            // pre-transform x
+        #if NUMSTRIPS > 4
+            t = (x ^ (x >> 7)) & AAA;
+            x = x ^ t ^ (t << 7);
+            t = (x ^ (x >> 14)) & CC;
+            x = x ^ t ^ (t << 14);
+        #endif
+        #if NUMSTRIPS > 12
+            t = (x1 ^ (x1 >> 7)) & AAA;
+            x1 = x1 ^ t ^ (t << 7);
+            t = (x1 ^ (x1 >> 14)) & CC;
+            x1 = x1 ^ t ^ (t << 14);
+        #endif
+            // pre-transform y
+            t = (y ^ (y >> 7)) & AAA;
+            y = y ^ t ^ (t << 7);
+            t = (y ^ (y >> 14)) & CC;
+            y = y ^ t ^ (t << 14);
+        #if NUMSTRIPS > 8
+            t = (y1 ^ (y1 >> 7)) & AAA;
+            y1 = y1 ^ t ^ (t << 7);
+            t = (y1 ^ (y1 >> 14)) & CC;
+            y1 = y1 ^ t ^ (t << 14);
+        #endif
+    #endif
+
     // final transform
     t = (x & FF) | ((y >> 4) & FF2);
     y = ((x << 4) & FF) | (y & FF2);
