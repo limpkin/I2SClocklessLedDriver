@@ -243,6 +243,8 @@
     #endif
 #endif
 
+#define MAX_PINS 20 //maximum number of pins supported, was 16, set to 20, okay?
+
 typedef union
 {
     uint8_t bytes[16];
@@ -251,7 +253,7 @@ typedef union
 } Lines;
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
-    static uint8_t signalsID[16] = {
+    static uint8_t signalsID[MAX_PINS] = {
         LCD_DATA_OUT0_IDX,
         LCD_DATA_OUT1_IDX,
         LCD_DATA_OUT2_IDX,
@@ -299,7 +301,7 @@ static void transpose16x1_noinline2(unsigned char *A, uint16_t *B);
 #ifdef ENABLE_HARDWARE_SCROLL
     static void loadAndTranspose(uint8_t *ledt, int led_per_strip, int num_stripst, OffsetDisplay offdisp, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
 #else
-    static void loadAndTranspose(uint8_t *ledt, int *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
+    static void loadAndTranspose(uint8_t *ledt, uint16_t *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb);
 #endif
 */
 
@@ -408,8 +410,8 @@ public:
     // int clock_pin;
     int p_r, p_g, p_b;
     int i2s_base_pin_index;
-    int nb_components;
-    int stripSize[16];
+    int nb_components; //channels per LED
+    uint16_t stripSize[MAX_PINS];
     uint16_t (*mapLed)(uint16_t led);
 
     // IDF5.5: driver class: __delay is variable to allow changing it at runtime
@@ -1223,9 +1225,9 @@ public:
         return l;
     }
 
-    int maxLength(int *sizes, int num_strips)
+    uint16_t maxLength(uint16_t *sizes, int num_strips)
     {
-        int max = 0;
+        uint16_t max = 0;
         for (int i = 0; i < num_strips; i++)
         {
             if (max < sizes[i])
@@ -1242,7 +1244,7 @@ public:
         initled((uint8_t *)pix.getPixels(), Pinsq, pix.getLengths(), pix.getNumStrip());
     }
 #endif
-    void initled(uint8_t *leds, uint8_t *Pinsq, int *sizes, int num_strips)
+    void initled(uint8_t *leds, uint8_t *Pinsq, uint16_t *sizes, int num_strips)
     {
         total_leds = 0;
         for (int i = 0; i < num_strips; i++)
@@ -1250,7 +1252,7 @@ public:
             this->stripSize[i] = sizes[i];
             total_leds += sizes[i];
         }
-        int maximum = maxLength(sizes, num_strips);
+        uint16_t maximum = maxLength(sizes, num_strips);
         // Serial.printf("maximum %d\n",maximum);
         ESP_LOGV(TAG, "maximum leds%d\n", maximum);
         nb_components = _nb_components;
@@ -1269,7 +1271,7 @@ public:
         initled(leds, Pinsq, this->stripSize, num_strips);
     }
 
-    void initled(uint8_t *leds, uint8_t *Pinsq, int *sizes, int num_strips, colorarrangment cArr)
+    void initled(uint8_t *leds, uint8_t *Pinsq, uint16_t *sizes, int num_strips, colorarrangment cArr)
     {
         total_leds = 0;
         for (int i = 0; i < num_strips; i++)
@@ -1277,7 +1279,7 @@ public:
             this->stripSize[i] = sizes[i];
             total_leds += sizes[i];
         }
-        int maximum = maxLength(sizes, num_strips);
+        uint16_t maximum = maxLength(sizes, num_strips);
 
         switch (cArr)
         {
@@ -1462,6 +1464,14 @@ public:
         i2sInit();
         initDMABuffers();
     }
+
+    // IDF5.5: updateLeds
+    #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
+        //recreate dma buffers if num_strips or num_led_per_strip or dmaBuffer size changed
+        void updateDriver(uint8_t *Pinsq, uint16_t *sizes, int num_strips, uint8_t dmaBuffer);
+        void deleteDriver();
+    #endif
+
 #ifdef CONFIG_IDF_TARGET_ESP32S3
     typedef dma_descriptor_t I2SClocklessLedDriverDMABuffer;
 #endif
@@ -1956,7 +1966,7 @@ static void IRAM_ATTR transpose16x1_noinline2(unsigned char *A, uint16_t *B)
 #endif
 }
 
-static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver *driver) // uint8_t *ledt, int *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb)
+static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver *driver) // uint8_t *ledt, uint16_t *sizes, int num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb)
 {
 
     // cont->leds, cont->stripSize, cont->num_strips, (uint16_t *)cont->DMABuffersTampon[cont->dmaBufferActive]->buffer, cont->ledToDisplay, cont->__green_map, cont->__red_map, cont->__blue_map, cont->__white_map, cont->nb_components, cont->p_g, cont->p_r, cont->p_b);

@@ -31,7 +31,7 @@ void setup() {
         setupWiFi();
     #endif
 
-    driver.initled(leds,pins,NUMSTRIPS,NUM_LEDS_PER_STRIP,ORDER_GRB);
+    driver.initled(leds, pins, NUMSTRIPS, NUM_LEDS_PER_STRIP, ORDER_GRB);
     driver.setBrightness(10);
 }
 

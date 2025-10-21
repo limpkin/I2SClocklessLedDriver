@@ -8,9 +8,9 @@
 CRGB leds[NUMSTRIPS*NUM_LEDS_PER_STRIP];
 
 #ifdef CONFIG_IDF_TARGET_ESP32S3
-int pins[6] = {9, 10,12,8,18,17};
+uint8_t pins[6] = {9, 10,12,8,18,17};
 #else
-int pins[6] = {14, 12, 13, 25, 33, 32};
+uint8_t pins[6] = {14, 12, 13, 25, 33, 32};
 #endif
 
 I2SClocklessLedDriver driver;
