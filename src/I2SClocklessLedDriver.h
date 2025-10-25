@@ -414,6 +414,8 @@ public:
     uint16_t stripSize[MAX_PINS];
     uint16_t (*mapLed)(uint16_t led);
 
+    bool isVirtualDriver = false; // prepare for virtual driver integration
+
     // IDF5.5: driver class: __delay is variable to allow changing it at runtime
     #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
         TickType_t __delay = 0;
@@ -1261,6 +1263,9 @@ public:
         p_b = _p_b;
         __initled(leds, Pinsq, num_strips, maximum);
     }
+
+    //initled with custom color arrangement
+    void initled(uint8_t *leds, uint8_t *Pinsq, uint16_t *sizes, int num_strips, int nb_components, int p_r, int p_g, int p_b); // see .cpp
 
     void initled(uint8_t *leds, uint8_t *Pinsq, int num_strips, int num_led_per_strip)
     {
