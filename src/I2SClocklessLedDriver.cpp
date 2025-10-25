@@ -44,7 +44,7 @@ void I2SClocklessLedDriver::initled(uint8_t *leds, uint8_t *Pinsq, uint16_t *siz
 
 // IDF5.5: updateLeds
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-    void I2SClocklessLedDriver::updateDriver(uint8_t *Pinsq, uint16_t *sizes, int num_strips, uint8_t dmaBuffer) {
+    void I2SClocklessLedDriver::updateDriver(uint8_t *Pinsq, uint16_t *sizes, int num_strips, uint8_t dmaBuffer, int nb_components, int p_r, int p_g, int p_b) {
 
         //do what ledsDriver.initled is doing, except i2sInit
 
@@ -57,6 +57,11 @@ void I2SClocklessLedDriver::initled(uint8_t *leds, uint8_t *Pinsq, uint16_t *siz
             total_leds += sizes[i];
         }
         uint16_t num_led_per_strip = maxLength(sizes, num_strips);
+
+        this->nb_components = nb_components;
+        this->p_r = p_r;
+        this->p_g = p_g;
+        this->p_b = p_b;
 
         //from __initled:
 

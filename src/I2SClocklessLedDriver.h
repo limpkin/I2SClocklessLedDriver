@@ -1473,7 +1473,7 @@ public:
     // IDF5.5: updateLeds
     #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
         //recreate dma buffers if num_strips or num_led_per_strip or dmaBuffer size changed
-        void updateDriver(uint8_t *Pinsq, uint16_t *sizes, int num_strips, uint8_t dmaBuffer);
+        void updateDriver(uint8_t *Pinsq, uint16_t *sizes, int num_strips, uint8_t dmaBuffer, int nb_components, int p_r, int p_g, int p_b);
         void deleteDriver();
     #endif
 
