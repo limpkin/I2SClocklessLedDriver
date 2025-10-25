@@ -24,24 +24,6 @@
     clock_speed clock_800KHZ = {6, 4, 1};
 #endif
 
-void I2SClocklessLedDriver::initled(uint8_t *leds, uint8_t *Pinsq, uint16_t *sizes, int num_strips, int nb_components, int p_r, int p_g, int p_b)
-{
-    total_leds = 0;
-    for (int i = 0; i < num_strips; i++)
-    {
-        this->stripSize[i] = sizes[i];
-        total_leds += sizes[i];
-    }
-    uint16_t maximum = maxLength(sizes, num_strips);
-    // Serial.printf("maximum %d\n",maximum);
-    ESP_LOGV(TAG, "maximum leds%d\n", maximum);
-    this->nb_components = nb_components;
-    this->p_r = p_r;
-    this->p_g = p_g;
-    this->p_b = p_b;
-    __initled(leds, Pinsq, num_strips, maximum);
-}
-
 // IDF5.5: updateLeds
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
     void I2SClocklessLedDriver::updateDriver(uint8_t *Pinsq, uint16_t *sizes, int num_strips, uint8_t dmaBuffer, int nb_components, int p_r, int p_g, int p_b) {
