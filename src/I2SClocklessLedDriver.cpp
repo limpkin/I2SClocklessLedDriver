@@ -26,7 +26,7 @@ clock_speed clock_800KHZ = {6, 4, 1};
 
 // IDF5.5: updateLeds
 #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 5, 0)
-void I2SClocklessLedDriver::updateDriver(uint8_t* Pinsq, uint16_t* sizes, int num_strips, uint8_t dmaBuffer, int nb_components, int p_r, int p_g, int p_b) {
+void I2SClocklessLedDriver::updateDriver(uint8_t* Pinsq, uint16_t* sizes, uint8_t num_strips, uint8_t dmaBuffer, uint8_t nb_components, uint8_t p_r, uint8_t p_g, uint8_t p_b, uint8_t p_w) {
   // do what ledsDriver.initled is doing, except i2sInit
 
   // from initled
@@ -42,6 +42,7 @@ void I2SClocklessLedDriver::updateDriver(uint8_t* Pinsq, uint16_t* sizes, int nu
   this->p_r = p_r;
   this->p_g = p_g;
   this->p_b = p_b;
+  this->p_w = p_w;
 
   // from __initled:
 
