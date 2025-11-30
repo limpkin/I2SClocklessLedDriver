@@ -244,9 +244,9 @@ static void transpose16x1_noinline2(unsigned char* A, uint16_t* B);
 
 /*
 #ifdef ENABLE_HARDWARE_SCROLL
-    static void loadAndTranspose(uint8_t *ledt, int led_per_strip, uint8_t num_stripst, OffsetDisplay offdisp, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t *mapw,
-int nbcomponents, int pg, int pr, int pb); #else static void loadAndTranspose(uint8_t *ledt, uint16_t *sizes, uint8_t num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t
-*mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb); #endif
+    static void loadAndTranspose(uint8_t *ledt, int led_per_strip, uint8_t num_stripst, OffsetDisplay offdisp, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb, uint8_t
+*mapw, int nbcomponents, int pg, int pr, int pb); #else static void loadAndTranspose(uint8_t *ledt, uint16_t *sizes, uint8_t num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr,
+uint8_t *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb); #endif
 */
 
 static void loadAndTranspose(I2SClocklessLedDriver* driver);
@@ -464,12 +464,10 @@ class I2SClocklessLedDriver {
     // LCD_CAM.lcd_clock.lcd_clkm_div_a = 1;      //_clockspeed.div_a;     // 0/1 fractional divide
     // LCD_CAM.lcd_clock.lcd_clkm_div_b = 0;      // Ò_clockspeed.div_b;
 
-    // esp32-d0 settings, see below (sk6812 compatibility )
-    LCD_CAM.lcd_clock.lcd_clkm_div_num = 33;  //_clockspeed.div_num; // 1st stage 1:250 divide
-    LCD_CAM.lcd_clock.lcd_clkm_div_a = 3;     //_clockspeed.div_a;     // 0/1 fractional divide
-    LCD_CAM.lcd_clock.lcd_clkm_div_b = 1;     // Ò_clockspeed.div_b;
-
-    LCD_CAM.lcd_clock.lcd_clkcnt_n = 1;  //
+    LCD_CAM.lcd_clock.lcd_clkm_div_num = 50;  //_clockspeed.div_num; // 1st stage 1:250 divide
+    LCD_CAM.lcd_clock.lcd_clkm_div_a = 1;     //_clockspeed.div_a;     // 0/1 fractional divide
+    LCD_CAM.lcd_clock.lcd_clkm_div_b = 0;     // Ò_clockspeed.div_b;
+    LCD_CAM.lcd_clock.lcd_clkcnt_n = 1;       //
 
     LCD_CAM.lcd_ctrl.lcd_rgb_mode_en = 0;     // i8080 mode (not RGB)
     LCD_CAM.lcd_rgb_yuv.lcd_conv_bypass = 0;  // Disable RGB/YUV converter
@@ -1747,8 +1745,8 @@ static void IRAM_ATTR transpose16x1_noinline2(unsigned char* A, uint16_t* B) {
 #endif
 }
 
-static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver* driver)  // uint8_t *ledt, uint16_t *sizes, uint8_t num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t *mapb,
-                                                                       // uint8_t *mapw, int nbcomponents, int pg, int pr, int pb)
+static void IRAM_ATTR loadAndTranspose(I2SClocklessLedDriver* driver)  // uint8_t *ledt, uint16_t *sizes, uint8_t num_stripst, uint16_t *buffer, int ledtodisp, uint8_t *mapg, uint8_t *mapr, uint8_t
+                                                                       // *mapb, uint8_t *mapw, int nbcomponents, int pg, int pr, int pb)
 {
   // cont->leds, cont->stripSize, cont->num_strips, (uint16_t *)cont->DMABuffersTampon[cont->dmaBufferActive]->buffer, cont->ledToDisplay, cont->__green_map, cont->__red_map, cont->__blue_map,
   // cont->__white_map, cont->nb_components, cont->p_g, cont->p_r, cont->p_b);
